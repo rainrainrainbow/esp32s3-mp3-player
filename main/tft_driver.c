@@ -199,62 +199,30 @@ void tft_fill_screen(uint16_t color)
     }
 }
 
-void tft_draw_jpeg(const uint8_t *jpeg_data, size_t len, uint16_t x, uint16_t y)
-{
-    if (!fb) return;
-    uint16_t width, height;
-    if (jpeg_decode_to_rgb565(jpeg_data, len, fb, DISPLAY_WIDTH * DISPLAY_HEIGHT * 2, &width, &height)) {
-        tft_set_addr_window(x, y, x + width - 1, y + height - 1);
-        tft_send_data16(fb, width * height);
-    }
-}
-
-void tft_draw_bmp(const uint8_t *bmp_data, size_t len)
-{
-    if (!fb) return;
-    uint16_t width, height;
-    if (bmp_decode_to_rgb565(bmp_data, len, fb, DISPLAY_WIDTH * DISPLAY_HEIGHT * 2, &width, &height)) {
-        tft_set_addr_window(0, 0, width - 1, height - 1);
-        tft_send_data16(fb, width * height);
-    }
-}
-
 void tft_show_image_file(const char *filepath)
 {
     if (!fb) {
         ESP_LOGE(TAG, "No framebuffer");
         return;
     }
-    FILE *f = fopen(filepath, "rb");
-    if (!f) {
-        ESP_LOGE(TAG, "Cannot open: %s", filepath);
-        return;
-    }
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (size <= 0) {
-        fclose(f);
-        return;
-    }
-    uint8_t *buf = malloc(size);
-    if (!buf) {
-        fclose(f);
-        ESP_LOGE(TAG, "OOM reading %s", filepath);
-        return;
-    }
-    fread(buf, 1, size, f);
-    fclose(f);
 
-    // Detect format by magic bytes
-    if (size >= 2 && buf[0] == 0xFF && buf[1] == 0xD8) {
-        // JPEG
-        tft_draw_jpeg(buf, size, 0, 0);
-    } else if (size >= 2 && buf[0] == 'B' && buf[1] == 'M') {
-        // BMP
-        tft_draw_bmp(buf, size);
-    } else {
-        ESP_LOGE(TAG, "Unsupported image format: %s", filepath);
+    uint16_t width, height;
+    uint16_t *pixels = NULL;
+
+    if (!decode_bmp_file(filepath, &width, &height, &pixels)) {
+        ESP_LOGE(TAG, "Failed to decode image: %s", filepath);
+        return;
     }
-    free(buf);
+
+    // Center or fit image on display
+    uint16_t x = 0, y = 0;
+    if (width > DISPLAY_WIDTH) width = DISPLAY_WIDTH;
+    if (height > DISPLAY_HEIGHT) height = DISPLAY_HEIGHT;
+    if (width < DISPLAY_WIDTH) x = (DISPLAY_WIDTH - width) / 2;
+    if (height < DISPLAY_HEIGHT) y = (DISPLAY_HEIGHT - height) / 2;
+
+    tft_set_addr_window(x, y, x + width - 1, y + height - 1);
+    tft_send_data16(pixels, width * height);
+
+    free_decoded_image(pixels);
 }
