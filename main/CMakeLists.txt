@@ -11,6 +11,7 @@ set(COMPONENT_SRCS
 set(COMPONENT_ADD_INCLUDEDIRS ".")
 set(COMPONENT_REQUIRES 
     driver 
+    esp_driver_i2s 
     fatfs 
     spi_flash 
     wear_levelling 
