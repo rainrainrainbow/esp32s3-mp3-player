@@ -9,8 +9,6 @@ set(COMPONENT_SRCS
     "minimp3.c"
 )
 set(COMPONENT_ADD_INCLUDEDIRS ".")
-
-# Use only built-in IDF components
 set(COMPONENT_REQUIRES 
     driver 
     fatfs 
@@ -18,8 +16,6 @@ set(COMPONENT_REQUIRES
     wear_levelling 
     nvs_flash 
     esp_timer
-    tinyusb
     tjpgd
 )
-
 register_component()
