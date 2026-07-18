@@ -1,3 +1,0 @@
-dependencies:
-  espressif/helix_mp3: "^1.0.0"
-  espressif/tjpgdec: "^1.0.0"
