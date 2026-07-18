@@ -77,7 +77,7 @@ static void show_next_image(void)
 
     uint8_t idx = 0;
     struct dirent *entry;
-    char filepath[128];
+    char filepath[320];
 
     while ((entry = readdir(dir)) != NULL) {
         if (!is_image_file(entry->d_name)) continue;
