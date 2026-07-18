@@ -136,7 +136,7 @@ void audio_player_init(void) { ESP_LOGI(TAG, "Audio player init"); i2s_init(); e
 
 bool audio_player_play_track(uint8_t track_num)
 {
-    if (track_num < 1 || track_num > 255) return false;
+    if (track_num < 1) return false;
     if (player_state == PLAYER_STATE_PLAYING || player_state == PLAYER_STATE_PAUSED) audio_player_stop();
     current_track = track_num; player_state = PLAYER_STATE_PLAYING;
     xTaskCreatePinnedToCore(audio_playback_task, "audio_play", 8192, (void*)(uint32_t)track_num, 5, &audio_task_handle, 1);
