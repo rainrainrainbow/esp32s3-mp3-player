@@ -27,7 +27,7 @@
 #include "fatfs_manager.h"
 #include "image_decoder.h"
 
-static const char *ar *TAG = "MAIN";
+static const char *TAG = "MAIN";
 
 // Image slideshow state
 static uint8_t current_image_index = 0;
