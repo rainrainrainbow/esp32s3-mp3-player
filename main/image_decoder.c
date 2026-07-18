@@ -1,5 +1,6 @@
 /*
- * image_decoder.c - JPEG decoder using TJpgDec + BMP decoder
+ * image_decoder.c - Image decoder (BMP only, zero external dependencies)
+ * For ESP32-S3 with OPI PSRAM
  */
 
 #include <stdio.h>
@@ -8,143 +9,124 @@
 #include "esp_log.h"
 #include "image_decoder.h"
 
-// TJpgDec
-
-
 static const char *TAG = "IMG_DEC";
 
-/* TJpgDec input stream callback */
-static size_t jpeg_input_cb(JDEC *jd, uint8_t *buf, size_t len)
-{
-    struct {
-        const uint8_t *data;
-        size_t size;
-        size_t pos;
-    } *ctx = (void*)jd->device;
+// BMP file header (14 bytes)
+#pragma pack(push, 1)
+typedef struct {
+    uint16_t bfType;
+    uint32_t bfSize;
+    uint16_t bfReserved1;
+    uint16_t bfReserved2;
+    uint32_t bfOffBits;
+} bmp_file_header_t;
 
-    if (buf) {
-        size_t available = ctx->size - ctx->pos;
-        size_t to_read = (len < available) ? len : available;
-        if (to_read > 0) {
-            memcpy(buf, ctx->data + ctx->pos, to_read);
-            ctx->pos += to_read;
+// BMP info header (40 bytes)
+typedef struct {
+    uint32_t biSize;
+    int32_t  biWidth;
+    int32_t  biHeight;
+    uint16_t biPlanes;
+    uint16_t biBitCount;
+    uint32_t biCompression;
+    uint32_t biSizeImage;
+    int32_t  biXPelsPerMeter;
+    int32_t  biYPelsPerMeter;
+    uint32_t biClrUsed;
+    uint32_t biClrImportant;
+} bmp_info_header_t;
+#pragma pack(pop)
+
+bool decode_bmp_file(const char *filepath, uint16_t *width, uint16_t *height, uint16_t **pixels)
+{
+    FILE *f = fopen(filepath, "rb");
+    if (!f) {
+        ESP_LOGE(TAG, "Cannot open: %s", filepath);
+        return false;
+    }
+
+    bmp_file_header_t file_hdr;
+    bmp_info_header_t info_hdr;
+
+    if (fread(&file_hdr, sizeof(file_hdr), 1, f) != 1) {
+        fclose(f);
+        return false;
+    }
+
+    if (file_hdr.bfType != 0x4D42) { // 'BM'
+        ESP_LOGE(TAG, "Not a BMP file");
+        fclose(f);
+        return false;
+    }
+
+    if (fread(&info_hdr, sizeof(info_hdr), 1, f) != 1) {
+        fclose(f);
+        return false;
+    }
+
+    if (info_hdr.biBitCount != 24) {
+        ESP_LOGE(TAG, "Only 24-bit BMP supported, got %d-bit", info_hdr.biBitCount);
+        fclose(f);
+        return false;
+    }
+
+    int32_t w = info_hdr.biWidth;
+    int32_t h = info_hdr.biHeight > 0 ? info_hdr.biHeight : -info_hdr.biHeight;
+    
+    if (w > 320 || h > 240) {
+        ESP_LOGW(TAG, "Image too large: %dx%d, will crop to display size", w, h);
+    }
+
+    // Allocate pixel buffer via PSRAM (external memory)
+    size_t pixel_count = (size_t)w * h;
+    uint16_t *buf = (uint16_t *)heap_caps_malloc(pixel_count * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf) {
+        buf = (uint16_t *)malloc(pixel_count * sizeof(uint16_t));
+        if (!buf) {
+            ESP_LOGE(TAG, "OOM for pixels");
+            fclose(f);
+            return false;
         }
-        return to_read;
     }
-    size_t available = ctx->size - ctx->pos;
-    size_t to_skip = (len < available) ? len : available;
-    ctx->pos += to_skip;
-    return to_skip;
-}
 
-/* TJpgDec output callback - fill RGB565 framebuffer */
-static int jpeg_output_cb(JDEC *jd, void *bitmap, JRECT *rect)
-{
-    uint16_t *fb = (uint16_t *)jd->device;
-    int fb_width = jd->width;
+    // Seek to pixel data
+    fseek(f, file_hdr.bfOffBits, SEEK_SET);
 
-    uint8_t *src = (uint8_t *)bitmap;
-    for (int y = rect->top; y <= rect->bottom; y++) {
-        for (int x = rect->left; x <= rect->right; x++) {
-            uint8_t r = *src++;
-            uint8_t g = *src++;
-            uint8_t b = *src++;
-            uint16_t pixel = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
-            fb[y * fb_width + x] = pixel;
+    // BMP rows are aligned to 4 bytes
+    int row_padding = (4 - ((w * 3) % 4)) % 4;
+
+    for (int32_t y = 0; y < h && y < 240; y++) {
+        // BMP is bottom-up, so reverse row order if biHeight > 0
+        int32_t row = (info_hdr.biHeight > 0) ? (h - 1 - y) : y;
+        
+        for (int32_t x = 0; x < w && x < 320; x++) {
+            uint8_t bgr[3];
+            if (fread(bgr, 1, 3, f) != 3) {
+                goto cleanup;
+            }
+            // Convert BGR to RGB565
+            uint8_t r = bgr[2] >> 3;  // 5 bits red
+            uint8_t g = bgr[1] >> 2;  // 6 bits green
+            uint8_t b = bgr[0] >> 3;  // 5 bits blue
+            buf[row * w + x] = (r << 11) | (g << 5) | b;
         }
-    }
-    return 1;
-}
-
-bool jpeg_decode_to_rgb565(const uint8_t *jpeg_data, size_t len,
-                           uint16_t *out_buf, size_t buf_size,
-                           uint16_t *width, uint16_t *height)
-{
-    struct {
-        const uint8_t *data;
-        size_t size;
-        size_t pos;
-    } stream_ctx = {
-        .data = jpeg_data,
-        .size = len,
-        .pos = 0,
-    };
-
-    uint8_t *work = malloc(3500);
-    if (!work) {
-        ESP_LOGE(TAG, "OOM for TJpgDec work area");
-        return false;
+        // Skip padding bytes
+        fseek(f, row_padding, SEEK_CUR);
     }
 
-    JDEC jd;
-    JRESULT res = jd_prepare(&jd, jpeg_input_cb, work, 3500, &stream_ctx);
-    if (res != JDR_OK) {
-        ESP_LOGE(TAG, "jd_prepare failed: %d", res);
-        free(work);
-        return false;
-    }
-
-    *width = jd.width;
-    *height = jd.height;
-    ESP_LOGI(TAG, "JPEG: %dx%d", jd.width, jd.height);
-
-    uint32_t needed = jd.width * jd.height * 2;
-    if (needed > buf_size) {
-        ESP_LOGE(TAG, "Buffer too small: need %d, have %d", needed, buf_size);
-        free(work);
-        return false;
-    }
-
-    jd.device = out_buf;
-    res = jd_decomp(&jd, jpeg_output_cb, 0);
-    if (res != JDR_OK) {
-        ESP_LOGE(TAG, "jd_decomp failed: %d", res);
-        free(work);
-        return false;
-    }
-
-    free(work);
-    ESP_LOGI(TAG, "JPEG decoded successfully");
-    return true;
-}
-
-/* ====== BMP Decoder (24-bit RGB) ====== */
-bool bmp_decode_to_rgb565(const uint8_t *bmp_data, size_t len,
-                          uint16_t *out_buf, size_t buf_size,
-                          uint16_t *width, uint16_t *height)
-{
-    if (len < 54) return false;
-    if (bmp_data[0] != 'B' || bmp_data[1] != 'M') return false;
-
-    uint32_t data_offset = *(uint32_t*)(bmp_data + 10);
-    int w = *(int32_t*)(bmp_data + 18);
-    int h = *(int32_t*)(bmp_data + 22);
-    uint16_t bpp = *(uint16_t*)(bmp_data + 28);
-
-    if (w <= 0 || h <= 0) return false;
-    if (w > 320 || h > 480) return false;
-    if ((uint32_t)(w * h) > buf_size / 2) return false;
-
+    fclose(f);
     *width = w;
     *height = h;
-    int abs_h = (h < 0) ? -h : h;
-
-    int row_bytes = ((w * (bpp / 8) + 3) / 4) * 4;
-
-    for (int y = abs_h - 1; y >= 0; y--) {
-        for (int x = 0; x < w; x++) {
-            int src_idx = data_offset + y * row_bytes + x * 3;
-            if (src_idx + 2 >= (int)len) break;
-
-            uint8_t b = bmp_data[src_idx];
-            uint8_t g = bmp_data[src_idx + 1];
-            uint8_t r = bmp_data[src_idx + 2];
-
-            uint16_t pixel = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
-            out_buf[y * w + x] = pixel;
-        }
-    }
-
-    ESP_LOGI(TAG, "BMP decoded: %dx%d", w, abs_h);
+    *pixels = buf;
     return true;
+
+cleanup:
+    fclose(f);
+    free(buf);
+    return false;
+}
+
+void free_decoded_image(uint16_t *pixels)
+{
+    if (pixels) free(pixels);
 }
