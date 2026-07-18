@@ -6,10 +6,11 @@ set(COMPONENT_SRCS
     "usb_msc.c" 
     "fatfs_manager.c"
     "image_decoder.c"
+    "minimp3.c"
 )
 set(COMPONENT_ADD_INCLUDEDIRS ".")
 
-# Required IDF components
+# Use only built-in IDF components
 set(COMPONENT_REQUIRES 
     driver 
     fatfs 
@@ -19,8 +20,7 @@ set(COMPONENT_REQUIRES
     i2s 
     esp_timer
     tinyusb
-    helix_mp3
-    esp_iot_solution
+    tjpgd
 )
 
 register_component()
