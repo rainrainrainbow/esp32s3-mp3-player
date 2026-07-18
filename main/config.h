@@ -2,7 +2,6 @@
 #define _BOARD_CONFIG_H_
 
 #include <driver/gpio.h>
-#include <driver/uart.h>
 
 /* ========== Audio Configuration ========== */
 #define AUDIO_INPUT_SAMPLE_RATE  16000
