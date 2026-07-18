@@ -1,5 +1,6 @@
 /*
  * audio_player.c - ES8311 audio playback via I2S + minimp3 decoder
+ * IDF v4.4 compatible - uses legacy I2S driver API
  */
 
 #include <stdio.h>
@@ -23,8 +24,6 @@ static player_state_t player_state = PLAYER_STATE_STOPPED;
 static uint8_t current_track = 0;
 static TaskHandle_t audio_task_handle = NULL;
 static volatile bool audio_task_running = false;
-
-static i2s_chan_handle_t i2s_tx_handle = NULL;
 
 // ES8311 I2C address
 #define ES8311_I2C_ADDR 0x18
@@ -57,69 +56,62 @@ static void es8311_init(void)
     ESP_ERROR_CHECK(i2c_param_config(I2C_NUM_1, &conf));
     ESP_ERROR_CHECK(i2c_driver_install(I2C_NUM_1, I2C_MODE_MASTER, 0, 0, 0));
 
-    // Reset ES8311
-    es8311_write_reg(0x00, 0x1F);
+    es8311_write_reg(0x00, 0x1F); // reset
     vTaskDelay(pdMS_TO_TICKS(50));
-
-    // Clock manager: MCLK from GPIO
-    es8311_write_reg(0x01, 0x00);
+    es8311_write_reg(0x01, 0x00); // clock
     vTaskDelay(pdMS_TO_TICKS(10));
-
-    // Power up DAC, soft ramp
-    es8311_write_reg(0x1F, 0x24);
+    es8311_write_reg(0x1F, 0x24); // power up DAC
     vTaskDelay(pdMS_TO_TICKS(10));
-
-    // I2S format: 16-bit, I2S standard
     es8311_write_reg(0x0A, 0x00); // SDP_IN
     es8311_write_reg(0x0B, 0x00); // SDP_OUT
-
-    // DAC volume (0dB)
     es8311_write_reg(0x22, 0x00); // DAC_VOL_L
     es8311_write_reg(0x23, 0x00); // DAC_VOL_R
-
-    // HP output from DAC
-    es8311_write_reg(0x26, 0x05);
+    es8311_write_reg(0x26, 0x05); // HP config
     es8311_write_reg(0x27, 0x1E);
     es8311_write_reg(0x28, 0x00);
 
-    // PA enable
     gpio_set_direction(AUDIO_CODEC_PA_PIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(AUDIO_CODEC_PA_PIN, 1);
+    gpio_set_level(AUDIO_CODEC_PA_PIN, 0);
 
     ESP_LOGI(TAG, "ES8311 ready");
 }
 
 static void i2s_init(void)
 {
-    ESP_LOGI(TAG, "Initializing I2S");
+    ESP_LOGI(TAG, "Initializing I2S (legacy IDF v4.4 API)");
 
-    i2s_chan_config_t chan_cfg = {
-        .id = I2S_NUM_0,
-        .role = I2S_ROLE_MASTER,
-        .dma_desc_num = 6,
-        .dma_frame_num = 240,
-        .auto_clear = true,
-    };
-    ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &i2s_tx_handle, NULL));
-
-    i2s_std_config_t std_cfg = {
-        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000),
-        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
-        .gpio_cfg = {
-            .mclk = AUDIO_I2S_GPIO_MCLK,
-            .bclk = AUDIO_I2S_GPIO_BCLK,
-            .ws = AUDIO_I2S_GPIO_WS,
-            .dout = AUDIO_I2S_GPIO_DOUT,
-            .din = AUDIO_I2S_GPIO_DIN,
-            .invert_flags = {false, false, false},
-        },
+    // Configure I2S in legacy v4.4 style
+    i2s_config_t i2s_config = {
+        .mode = I2S_MODE_MASTER | I2S_MODE_TX,
+        .sample_rate = 44100,
+        .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
+        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+        .communication_format = I2S_COMM_FORMAT_I2S_MSB,
+        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+        .dma_buf_count = 6,
+        .dma_buf_len = 240,
+        .use_apll = false,
+        .tx_desc_auto_clear = true,
+        .fixed_mclk = 0,
     };
 
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(i2s_tx_handle, &std_cfg));
-    ESP_ERROR_CHECK(i2s_channel_enable(i2s_tx_handle));
+    i2s_pin_config_t pin_config = {
+        .bck_io_num = AUDIO_I2S_GPIO_BCLK,
+        .ws_io_num = AUDIO_I2S_GPIO_WS,
+        .data_out_num = AUDIO_I2S_GPIO_DOUT,
+        .data_in_num = AUDIO_I2S_GPIO_DIN,
+    };
+
+    ESP_ERROR_CHECK(i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL));
+    ESP_ERROR_CHECK(i2s_set_pin(I2S_NUM_0, &pin_config));
+    
+    // Enable MCLK output on GPIO 45 (using I2S_MCLK_MULTIPLE_GPIO)
+    ESP_ERROR_CHECK(i2s_set_clk(I2S_NUM_0, 44100, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO));
+
+    ESP_LOGI(TAG, "I2S initialized");
 }
 
-/* MP3 playback task using minimp3 */
+/* MP3 playback task using minimp3 - uses i2s_write (IDF v4.4 API) */
 static void audio_playback_task(void *param)
 {
     uint8_t track = (uint32_t)param;
@@ -151,10 +143,9 @@ static void audio_playback_task(void *param)
         vTaskDelete(NULL);
         return;
     }
-    fread(mp3_buf, 1, fsize, f);
+    size_t bytes_read = fread(mp3_buf, 1, fsize, f);
     fclose(f);
 
-    // Initialize minimp3 decoder
     mp3dec_t dec;
     mp3dec_init(&dec);
 
@@ -162,8 +153,9 @@ static void audio_playback_task(void *param)
     int16_t pcm_buf[MINIMP3_MAX_SAMPLES_PER_FRAME];
 
     uint8_t *input = mp3_buf;
-    int bytes_left = fsize;
+    int bytes_left = bytes_read;
 
+    gpio_set_level(AUDIO_CODEC_PA_PIN, 1);
     player_state = PLAYER_STATE_PLAYING;
     audio_task_running = true;
 
@@ -173,35 +165,33 @@ static void audio_playback_task(void *param)
             input += info.frame_bytes;
             bytes_left -= info.frame_bytes;
         } else {
-            // No frame found, advance by 1 byte
             input++;
             bytes_left--;
             continue;
         }
 
         if (samples > 0) {
-            // Convert to mono if stereo
             int channels = info.channels;
             int frames = samples / channels;
+            size_t written = 0;
 
             if (channels == 2 && frames > 0) {
-                // Simple mono downmix to local buffer
+                // Downmix stereo to mono
                 int16_t mono[1152];
                 for (int i = 0; i < frames && i < 1152; i++) {
                     int32_t sum = (int32_t)pcm_buf[i * 2] + (int32_t)pcm_buf[i * 2 + 1];
                     mono[i] = sum >> 1;
                 }
-                size_t written = 0;
-                i2s_channel_write(i2s_tx_handle, mono, frames * sizeof(int16_t), &written, portMAX_DELAY);
+                i2s_write(I2S_NUM_0, mono, frames * sizeof(int16_t), &written, portMAX_DELAY);
             } else {
-                size_t written = 0;
-                i2s_channel_write(i2s_tx_handle, pcm_buf, samples * sizeof(int16_t), &written, portMAX_DELAY);
+                i2s_write(I2S_NUM_0, pcm_buf, samples * sizeof(int16_t), &written, portMAX_DELAY);
             }
         }
     }
 
     ESP_LOGI(TAG, "Playback finished");
     free(mp3_buf);
+    gpio_set_level(AUDIO_CODEC_PA_PIN, 0);
     player_state = PLAYER_STATE_STOPPED;
     audio_task_running = false;
     audio_task_handle = NULL;
@@ -239,12 +229,11 @@ bool audio_player_play_track(uint8_t track_num)
 void audio_player_stop(void)
 {
     player_state = PLAYER_STATE_STOPPED;
-    if (audio_task_handle) {
-        vTaskDelay(pdMS_TO_TICKS(50));
-        audio_task_handle = NULL;
-    }
     audio_task_running = false;
     gpio_set_level(AUDIO_CODEC_PA_PIN, 0);
+    i2s_stop(I2S_NUM_0);
+    i2s_zero_dma_buffer(I2S_NUM_0);
+    audio_task_handle = NULL;
 }
 
 void audio_player_pause(void)
