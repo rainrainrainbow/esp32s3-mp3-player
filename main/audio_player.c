@@ -10,7 +10,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_err.h"
-#include "driver/i2s.h"
+#include "driver/i2s_std.h"
 #include "driver/i2c.h"
 #include "config.h"
 #include "audio_player.h"
@@ -182,9 +182,9 @@ static void audio_playback_task(void *param)
                     int32_t sum = (int32_t)pcm_buf[i * 2] + (int32_t)pcm_buf[i * 2 + 1];
                     mono[i] = sum >> 1;
                 }
-                i2s_write(I2S_NUM_0, mono, frames * sizeof(int16_t), &written, portMAX_DELAY);
+                i2s_channel_write(i2s_tx_handle, mono, frames * sizeof(int16_t), &written, portMAX_DELAY);
             } else {
-                i2s_write(I2S_NUM_0, pcm_buf, samples * sizeof(int16_t), &written, portMAX_DELAY);
+                i2s_channel_write(i2s_tx_handle, pcm_buf, samples * sizeof(int16_t), &written, portMAX_DELAY);
             }
         }
     }
