@@ -6,13 +6,14 @@
  * Features:
  * - I2C slave at 0x52, registers: 0x01=track, 0x02=status
  * - MP3 playback from SPI flash FATFS via ES8311
- * - TFT image display (JPEG/BMP slideshow)
+ * - TFT image display (BMP slideshow)
  * - USB Mass Storage for file transfer
  */
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <dirent.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -26,11 +27,20 @@
 #include "fatfs_manager.h"
 #include "image_decoder.h"
 
-static const char *TAG = "MAIN";
+static const char *ar *TAG = "MAIN";
 
 // Image slideshow state
 static uint8_t current_image_index = 0;
 static uint8_t max_images = 0;
+
+/* Check if filename has an image extension */
+static bool is_image_file(const char *name)
+{
+    const char *ext = strrchr(name, '.');
+    if (!ext) return false;
+    if (strcasecmp(ext, ".bmp") == 0) return true;
+    return false;
+}
 
 /* Scan for images in the images directory */
 static uint8_t scan_images(void)
@@ -44,16 +54,8 @@ static uint8_t scan_images(void)
     uint8_t count = 0;
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_type == DT_REG) {
-            const char *name = entry->d_name;
-            const char *ext = strrchr(name, '.');
-            if (ext) {
-                if (strcasecmp(ext, ".jpg") == 0 || 
-                    strcasecmp(ext, ".jpeg") == 0 ||
-                    strcasecmp(ext, ".bmp") == 0) {
-                    count++;
-                }
-            }
+        if (is_image_file(entry->d_name)) {
+            count++;
         }
     }
     closedir(dir);
@@ -73,28 +75,21 @@ static void show_next_image(void)
     DIR *dir = opendir(IMAGE_DIR);
     if (!dir) return;
 
-    // Find the nth image file
     uint8_t idx = 0;
     struct dirent *entry;
     char filepath[128];
 
     while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_type != DT_REG) continue;
-        const char *ext = strrchr(entry->d_name, '.');
-        if (!ext) continue;
-        if (strcasecmp(ext, ".jpg") == 0 || 
-            strcasecmp(ext, ".jpeg") == 0 ||
-            strcasecmp(ext, ".bmp") == 0) {
-            if (idx == current_image_index) {
-                snprintf(filepath, sizeof(filepath), "%s/%s", IMAGE_DIR, entry->d_name);
-                ESP_LOGI(TAG, "Showing image: %s", filepath);
-                tft_show_image_file(filepath);
-                closedir(dir);
-                current_image_index = (current_image_index + 1) % max_images;
-                return;
-            }
-            idx++;
+        if (!is_image_file(entry->d_name)) continue;
+        if (idx == current_image_index) {
+            snprintf(filepath, sizeof(filepath), "%s/%s", IMAGE_DIR, entry->d_name);
+            ESP_LOGI(TAG, "Showing image: %s", filepath);
+            tft_show_image_file(filepath);
+            closedir(dir);
+            current_image_index = (current_image_index + 1) % max_images;
+            return;
         }
+        idx++;
     }
     closedir(dir);
     current_image_index = 0;
@@ -107,12 +102,11 @@ static void slideshow_task(void *param)
         if (audio_player_get_state() == PLAYER_STATE_PLAYING) {
             show_next_image();
         }
-        // Rotate every 5 seconds during playback
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }
 
-/* I2C status update task - updates REG_PLAY_STATUS periodically */
+/* I2C status update task */
 static void status_update_task(void *param)
 {
     while (1) {
@@ -165,7 +159,7 @@ void app_main(void)
     if (max_images > 0) {
         show_next_image();
     } else {
-        tft_fill_screen(0x001F); // Blue screen if no images
+        tft_fill_screen(0x001F);
     }
 
     // Start slideshow task
