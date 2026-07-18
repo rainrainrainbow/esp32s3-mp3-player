@@ -17,7 +17,6 @@ set(COMPONENT_REQUIRES
     spi_flash 
     wear_levelling 
     nvs_flash 
-    esp_i2s
     esp_timer
     tinyusb
     tjpgd
