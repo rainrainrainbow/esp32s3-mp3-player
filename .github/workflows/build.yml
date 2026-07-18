@@ -8,18 +8,20 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:release-v4.4
     permissions:
       contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build with ESP-IDF
-        uses: espressif/esp-idf-ci-action@v1
-        with:
-          esp_idf_version: v4.4
-          target: esp32s3
-          build_dir: ./build
+      - name: Build firmware
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py set-target esp32s3
+          idf.py build
 
       - name: Prepare Artifacts
         shell: bash
@@ -28,11 +30,10 @@ jobs:
           for f in build/bootloader/bootloader.bin build/partition_table/partition-table.bin build/esp32s3_mp3_player.bin; do
             if [ -f "$f" ]; then
               cp "$f" artifacts/
-              echo "Copied: $f"
             fi
           done
-          pip install esptool 2>/dev/null
-          python3 -m esptool --chip esp32s3 merge_bin             --output artifacts/firmware_merged.bin             --flash_mode qio --flash_freq 80m --flash_size 16MB             0x0000 artifacts/bootloader.bin             0x8000 artifacts/partition-table.bin             0x10000 artifacts/esp32s3_mp3_player.bin || true
+          pip3 install esptool 2>/dev/null || true
+          python3 -m esptool --chip esp32s3 merge_bin --output artifacts/firmware_merged.bin --flash_mode qio --flash_freq 80m --flash_size 16MB 0x0 artifacts/bootloader.bin 0x8000 artifacts/partition-table.bin 0x10000 artifacts/esp32s3_mp3_player.bin || true
           ls -la artifacts/
 
       - name: Upload firmware
@@ -45,20 +46,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: build-${{{{ github.run_number }}}}
-          name: "ESP32-S3 MP3 Player Build #${{{{ github.run_number }}}}"
-          body: |
-            ## ESP32-S3 MP3 Player Firmware
-            ### Files:
-            - `bootloader.bin` - Bootloader
-            - `partition-table.bin` - Partition table
-            - `esp32s3_mp3_player.bin` - Application firmware
-            - `firmware_merged.bin` - Complete merged firmware
-            
-            ### Flashing:
-            ```
-            esptool.py --chip esp32s3 -p COM_PORT write_flash 0x0 firmware_merged.bin
-            ```
-          files: |
-            artifacts/*.bin
+          tag_name: build-${{ github.run_number }}
+          name: "ESP32-S3 MP3 Player Build #${{ github.run_number }}"
+          files: artifacts/*.bin
           make_latest: true
