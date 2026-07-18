@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: espressif/idf:release-v5.3
+      image: espressif/idf:release-v6.1
     permissions:
       contents: write
     steps:
