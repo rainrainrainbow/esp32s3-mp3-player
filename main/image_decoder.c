@@ -9,7 +9,7 @@
 #include "image_decoder.h"
 
 // TJpgDec
-#include "tjpgd.h"
+
 
 static const char *TAG = "IMG_DEC";
 
