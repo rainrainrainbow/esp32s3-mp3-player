@@ -19,6 +19,7 @@ set(COMPONENT_REQUIRES
     nvs_flash 
     i2s 
     esp_timer
+    esp_timer
     tinyusb
     tjpgd
 )
