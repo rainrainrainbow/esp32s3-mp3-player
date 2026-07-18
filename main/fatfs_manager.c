@@ -29,7 +29,7 @@ bool fatfs_mount_spiflash(void)
         .allocation_unit_size = CONFIG_WL_SECTOR_SIZE * 8,
     };
 
-    esp_err_t err = esp_vfs_fat_spiflash_mount_rw_wl(
+    esp_err_t err = esp_vfs_fat_spiflash_mount(
         STORAGE_MOUNT_POINT,
         STORAGE_PARTITION_LABEL,
         &mount_config,
@@ -54,7 +54,7 @@ bool fatfs_unmount(void)
 {
     if (!mounted) return true;
 
-    esp_err_t err = esp_vfs_fat_spiflash_unmount_rw_wl(STORAGE_MOUNT_POINT, wl_handle);
+    esp_err_t err = esp_vfs_fat_spiflash_unmount(STORAGE_MOUNT_POINT, wl_handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Unmount failed: %s", esp_err_to_name(err));
         return false;
