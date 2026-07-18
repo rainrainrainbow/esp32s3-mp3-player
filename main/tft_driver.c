@@ -203,7 +203,7 @@ void tft_draw_jpeg(const uint8_t *jpeg_data, size_t len, uint16_t x, uint16_t y)
 {
     if (!fb) return;
     uint16_t width, height;
-    if (jpeg_decode_to_rgb565_stub(jpeg_data, len, fb, DISPLAY_WIDTH * DISPLAY_HEIGHT * 2, &width, &height)) {
+    if (jpeg_decode_to_rgb565(jpeg_data, len, fb, DISPLAY_WIDTH * DISPLAY_HEIGHT * 2, &width, &height)) {
         tft_set_addr_window(x, y, x + width - 1, y + height - 1);
         tft_send_data16(fb, width * height);
     }
@@ -213,7 +213,7 @@ void tft_draw_bmp(const uint8_t *bmp_data, size_t len)
 {
     if (!fb) return;
     uint16_t width, height;
-    if (bmp_decode_to_rgb565_stub(bmp_data, len, fb, DISPLAY_WIDTH * DISPLAY_HEIGHT * 2, &width, &height)) {
+    if (bmp_decode_to_rgb565(bmp_data, len, fb, DISPLAY_WIDTH * DISPLAY_HEIGHT * 2, &width, &height)) {
         tft_set_addr_window(0, 0, width - 1, height - 1);
         tft_send_data16(fb, width * height);
     }
