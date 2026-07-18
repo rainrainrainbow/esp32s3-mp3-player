@@ -3,113 +3,62 @@ name: ESP32-S3 MP3 Player Build
 on:
   push:
     branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: espressif/idf:release-v5.3
     permissions:
       contents: write
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build firmware
-        shell: bash
-        run: |
-          . /opt/esp/idf/export.sh
-          
-          # Set target
-          idf.py set-target esp32s3
-          
-          # Build all
-          idf.py build
-          
-          echo "=== Build output ==="
-          ls -la build/*.bin build/*.elf build/*.map
+      - name: Build with ESP-IDF
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v4.4
+          target: esp32s3
+          build_dir: ./build
 
       - name: Prepare Artifacts
         shell: bash
         run: |
           mkdir -p artifacts
-          
-          # Copy all binary outputs
           for f in build/bootloader/bootloader.bin build/partition_table/partition-table.bin build/esp32s3_mp3_player.bin; do
             if [ -f "$f" ]; then
               cp "$f" artifacts/
               echo "Copied: $f"
             fi
           done
-          
-          # Generate merged/flashable binary
-          export IDF_PATH=/opt/esp/idf
           pip install esptool 2>/dev/null
-          
-          python3 /opt/esp/idf/components/esptool_py/esptool/esptool.py \
-            --chip esp32s3 merge_bin \
-            --output artifacts/firmware_merged.bin \
-            --flash_mode qio \
-            --flash_freq 80m \
-            --flash_size 16MB \
-            0x0000 artifacts/bootloader.bin \
-            0x8000 artifacts/partition-table.bin \
-            0x10000 artifacts/esp32s3_mp3_player.bin
-          
-          # Also copy ELF for debugging
-          cp build/esp32s3_mp3_player.elf artifacts/ || true
-          cp build/esp32s3_mp3_player.map artifacts/ || true
-          
-          echo "=== Artifacts Ready ==="
+          python3 -m esptool --chip esp32s3 merge_bin             --output artifacts/firmware_merged.bin             --flash_mode qio --flash_freq 80m --flash_size 16MB             0x0000 artifacts/bootloader.bin             0x8000 artifacts/partition-table.bin             0x10000 artifacts/esp32s3_mp3_player.bin || true
           ls -la artifacts/
 
-      - name: Upload firmware artifacts
+      - name: Upload firmware
         uses: actions/upload-artifact@v4
         with:
           name: esp32s3-mp3-player-firmware
           path: artifacts/
-          compression-level: 0
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: build-${{ github.run_number }}
-          name: "ESP32-S3 MP3 Player Build #${{ github.run_number }}"
+          tag_name: build-${{{{ github.run_number }}}}
+          name: "ESP32-S3 MP3 Player Build #${{{{ github.run_number }}}}"
           body: |
             ## ESP32-S3 MP3 Player Firmware
-            
             ### Files:
             - `bootloader.bin` - Bootloader
             - `partition-table.bin` - Partition table
             - `esp32s3_mp3_player.bin` - Application firmware
-            - `firmware_merged.bin` - Complete merged firmware (one-step flash)
+            - `firmware_merged.bin` - Complete merged firmware
             
-            ### Flashing (Individual):
-            ```
-            esptool.py --chip esp32s3 -p COM_PORT write_flash \
-              --flash_mode qio --flash_freq 80m --flash_size 16MB \
-              0x0000 bootloader.bin \
-              0x8000 partition-table.bin \
-              0x10000 esp32s3_mp3_player.bin
-            ```
-            
-            ### Flashing (Merged - easy):
+            ### Flashing:
             ```
             esptool.py --chip esp32s3 -p COM_PORT write_flash 0x0 firmware_merged.bin
             ```
-            
-            ### File Structure (after plugging USB):
-            - `/music/001.mp3` ~ `/music/255.mp3` - MP3 tracks
-            - `/images/` - JPEG/BMP slideshow images
-            
-            ### I2C Control (Slave addr 0x52):
-            - `[0x01, track_num]` → Play track
-            - `[0x02]` → Read status (0=stopped, 1=playing, 2=paused)
           files: |
             artifacts/*.bin
-          generate_release_notes: false
           make_latest: true
