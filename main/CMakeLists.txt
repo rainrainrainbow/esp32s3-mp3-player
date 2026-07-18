@@ -16,6 +16,5 @@ set(COMPONENT_REQUIRES
     wear_levelling 
     nvs_flash 
     esp_timer
-    tjpgd
 )
 register_component()
