@@ -1,0 +1,11 @@
+idf_component_manage:
+  dependencies:
+    - name: espressif/esp-iot-solution
+      version: ">=1.0.0"
+      git: https://github.com/espressif/esp-iot-solution.git
+    - name: espressif/helix_mp3
+      version: ">=1.0.0"
+    - name: espressif/tinyusb
+      version: ">=0.15.0"
+      rules:
+        - if: "idf_version >=5.0"
