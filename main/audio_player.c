@@ -9,7 +9,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_err.h"
-#include "driver/i2s_std.h"
+#include "driver/i2s.h"
 #include "driver/i2c.h"
 #include "config.h"
 #include "audio_player.h"
