@@ -115,6 +115,63 @@ static void status_update_task(void *param)
     }
 }
 
+/* Button task - GPIO0 prev, GPIO43 next */
+#define DEBOUNCE_MS 50
+static void button_task(void *param)
+{
+    uint8_t prev_track = 0;
+    uint8_t max_tracks = 0;
+
+    // Count tracks on startup
+    DIR *dir = opendir(MUSIC_DIR);
+    if (dir) {
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL) {
+            const char *ext = strrchr(entry->d_name, '.');
+            if (ext && strcasecmp(ext, ".mp3") == 0) max_tracks++;
+        }
+        closedir(dir);
+    }
+    ESP_LOGI(TAG, "Found %d MP3 tracks", max_tracks);
+    if (max_tracks == 0) max_tracks = 255;
+
+    // Configure buttons as input with pull-up
+    gpio_set_direction(LEFT_BUTTON_GPIO, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(LEFT_BUTTON_GPIO, GPIO_PULLUP_ONLY);
+    gpio_set_direction(RIGHT_BUTTON_GPIO, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(RIGHT_BUTTON_GPIO, GPIO_PULLUP_ONLY);
+
+    uint8_t current = 1;
+    while (1) {
+        bool left_pressed = (gpio_get_level(LEFT_BUTTON_GPIO) == 0);
+        bool right_pressed = (gpio_get_level(RIGHT_BUTTON_GPIO) == 0);
+
+        if (left_pressed) {
+            vTaskDelay(pdMS_TO_TICKS(DEBOUNCE_MS));
+            if (gpio_get_level(LEFT_BUTTON_GPIO) == 0) {
+                // Previous track
+                current = (current == 1) ? max_tracks : current - 1;
+                ESP_LOGI(TAG, "Button: prev track %d", current);
+                audio_player_play_track(current);
+                while (gpio_get_level(LEFT_BUTTON_GPIO) == 0) vTaskDelay(pdMS_TO_TICKS(10));
+            }
+        }
+
+        if (right_pressed) {
+            vTaskDelay(pdMS_TO_TICKS(DEBOUNCE_MS));
+            if (gpio_get_level(RIGHT_BUTTON_GPIO) == 0) {
+                // Next track
+                current = (current >= max_tracks) ? 1 : current + 1;
+                ESP_LOGI(TAG, "Button: next track %d", current);
+                audio_player_play_track(current);
+                while (gpio_get_level(RIGHT_BUTTON_GPIO) == 0) vTaskDelay(pdMS_TO_TICKS(10));
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
 void app_main(void)
 {
     ESP_LOGI(TAG, "========================================");
@@ -143,13 +200,13 @@ void app_main(void)
     // Mount SPI flash FATFS
     if (!fatfs_mount_spiflash()) {
         ESP_LOGE(TAG, "FATFS mount failed - check partition table");
-        tft_fill_screen(0xF800); // Red screen on error
+        tft_fill_screen(0xF800);
     }
 
     // Initialize I2C slave
     i2c_slave_init();
 
-    // Initialize USB MSC
+    // Initialize USB MSC (U盘)
     usb_msc_init();
 
     // Scan for images
@@ -168,8 +225,12 @@ void app_main(void)
     // Start status update task
     xTaskCreatePinnedToCore(status_update_task, "status_upd", 2048, NULL, 1, NULL, 1);
 
-    ESP_LOGI(TAG, "System ready. Waiting for I2C commands...");
-    ESP_LOGI(TAG, " - Write 0x01 <track> to play track");
-    ESP_LOGI(TAG, " - Read 0x02 for play status");
+    // Start button task (GPIO0=prev, GPIO43=next)
+    xTaskCreatePinnedToCore(button_task, "buttons", 3072, NULL, 5, NULL, 1);
+
+    ESP_LOGI(TAG, "System ready");
+    ESP_LOGI(TAG, " - I2C: Write 0x01 <track> to play");
+    ESP_LOGI(TAG, " - I2C: Read 0x02 for status");
+    ESP_LOGI(TAG, " - GPIO0: Prev track, GPIO43: Next track");
     ESP_LOGI(TAG, " - Connect USB to access storage");
 }
