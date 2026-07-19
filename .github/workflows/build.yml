@@ -45,5 +45,5 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: "ESP32-S3 MP3 Player Build #${{ github.run_number }}"
-          files: artifacts/*.bin
+          files: artifacts/*
           make_latest: true
