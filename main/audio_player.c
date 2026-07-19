@@ -91,7 +91,7 @@ static void audio_playback_task(void *param)
 {
     uint8_t track = (uint32_t)param;
     char path[64];
-    snprintf(path, sizeof(path), "%s/%03d.mp3", MUSIC_DIR, track);
+    snprintf(path, sizeof(path), "%s/%d.mp3", MUSIC_DIR, track);
     ESP_LOGI(TAG, "Opening: %s", path);
     FILE *f = fopen(path, "rb");
     if (!f) {
