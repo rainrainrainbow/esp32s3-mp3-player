@@ -101,14 +101,18 @@ static void show_next_image(void)
                 struct dirent *subentry;
                 while ((subentry = readdir(sub)) != NULL && img_count < 64) {
                     if (is_image_file(subentry->d_name)) {
-                        snprintf(image_paths[img_count], sizeof(image_paths[0]), "%s/%s", subpath, subentry->d_name);
+                        strlcpy(image_paths[img_count], subpath, sizeof(image_paths[0]));
+                        strlcat(image_paths[img_count], "/", sizeof(image_paths[0]));
+                        strlcat(image_paths[img_count], subentry->d_name, sizeof(image_paths[0]));
                         img_count++;
                     }
                 }
                 closedir(sub);
             }
         } else if (is_image_file(entry->d_name)) {
-            snprintf(image_paths[img_count], sizeof(image_paths[0]), "%s/%s", IMAGE_DIR, entry->d_name);
+            strlcpy(image_paths[img_count], IMAGE_DIR, sizeof(image_paths[0]));
+            strlcat(image_paths[img_count], "/", sizeof(image_paths[0]));
+            strlcat(image_paths[img_count], entry->d_name, sizeof(image_paths[0]));
             img_count++;
         }
     }
