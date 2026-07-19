@@ -1,7 +1,7 @@
 name: ESP32-S3 MP3 Player Build
 on:
   push:
-    branches: [ "main", "minimal-player" ]
+    branches: [ main, minimal-player ]
   workflow_dispatch:
 
 jobs:
@@ -22,18 +22,16 @@ jobs:
         shell: bash
         run: |
           apt-get update -qq && apt-get install -y -qq dosfstools mtools 2>/dev/null || true
-          python3 -c "import struct, math; p=b''; [p:=p+struct.pack('<h',int(32767*0.3*math.sin(2*math.pi*440*i/44100))) for i in range(44100*5)]; open('test.raw','wb').write(p); print('OK') "
-          ffmpeg -f s16le -ar 44100 -ac 1 -i test.raw -codec:a libmp3lame -b:a 128k -y test.mp3 2>/dev/null || apt-get install -y -qq ffmpeg 2>/dev/null && ffmpeg -f s16le -ar 44100 -ac 1 -i test.raw -codec:a libmp3lame -b:a 128k -y test.mp3 2>/dev/null
-          python3 -c "import struct; w,h=240,320; rs=(w*3+3)&~3; open('test.bmp','wb').write(struct.pack('<HIHHI',0x4D42,14+40+rs*h,0,0,14+40)+struct.pack('<IiiHHIIiiII',40,w,h,1,24,0,rs*h,0,0,0,0)+b''.join(struct.pack('BBB',int(255*(h-y)/h),0,0)+b'\x00'*(rs-w*3) for y in range(h) for x in range(w) if x==0 else b'')); print('BMP OK')"
-          STORAGE_SIZE=12320768
-          dd if=/dev/zero of=storage.img bs=1 count=$STORAGE_SIZE 2>/dev/null
+          python3 -c "import struct,math; p=b''; exec('for i in range(44100*5):p+=struct.pack(\"<h\",int(32767*0.3*math.sin(2*math.pi*440*i/44100)))'); open('test.raw','wb').write(p)"
+          ffmpeg -f s16le -ar 44100 -ac 1 -i test.raw -codec:a libmp3lame -b:a 128k -y test.mp3 2>/dev/null || (apt-get install -y -qq ffmpeg 2>/dev/null && ffmpeg -f s16le -ar 44100 -ac 1 -i test.raw -codec:a libmp3lame -b:a 128k -y test.mp3 2>/dev/null)
+          python3 -c "import struct; w,h=240,320; rs=(w*3+3)&~3; open('test.bmp','wb').write(struct.pack('<HIHHI',0x4D42,14+40+rs*h,0,0,54)+struct.pack('<IiiHHIIiiII',40,w,h,1,24,0,rs*h,0,0,0,0)); f=open('test.bmp','ab'); [f.write(struct.pack('BBB',int(255*(h-y)/h),0,0)+b'\\x00'*(rs-w*3)) for y in range(h)]; f.close()"
+          dd if=/dev/zero of=storage.img bs=1024 count=12032 2>/dev/null
           mkfs.fat -F 16 -S 4096 storage.img 2>/dev/null
           mmd -i storage.img ::/music 2>/dev/null || true
           mmd -i storage.img ::/images 2>/dev/null || true
           mmd -i storage.img ::/images/1 2>/dev/null || true
           mcopy -i storage.img test.mp3 ::/music/1.mp3 2>/dev/null
           mcopy -i storage.img test.bmp ::/images/1/1.bmp 2>/dev/null
-          ls -la storage.img
       - name: Prepare Artifacts
         shell: bash
         run: |
