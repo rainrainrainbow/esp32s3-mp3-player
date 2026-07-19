@@ -327,5 +327,5 @@ void app_main(void)
     xTaskCreatePinnedToCore(button_task, "buttons", 3072, NULL, 5, NULL, 1);
 
     ESP_LOGI(TAG, "System ready");
-    ESP_LOGI(TAG, "GPIO0=Prev, GPIO43=Next");
+    ESP_LOGI(TAG, "GPIO0=Prev, GPIO43=Next - press button to play");
 }
