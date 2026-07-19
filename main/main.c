@@ -56,7 +56,7 @@ static uint8_t scan_images(void)
     while ((entry = readdir(dir)) != NULL) {
         if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
             // Scan subdirectory
-            char subpath[320];
+            char subpath[384];
             snprintf(subpath, sizeof(subpath), "%s/%s", IMAGE_DIR, entry->d_name);
             DIR *sub = opendir(subpath);
             if (sub) {
@@ -85,7 +85,7 @@ static void show_next_image(void)
     }
 
     // Collect all image paths (including subdirectories)
-    char image_paths[64][320];
+    char image_paths[64][384];
     uint8_t img_count = 0;
 
     DIR *dir = opendir(IMAGE_DIR);
@@ -94,7 +94,7 @@ static void show_next_image(void)
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL && img_count < 64) {
         if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
-            char subpath[320];
+            char subpath[384];
             snprintf(subpath, sizeof(subpath), "%s/%s", IMAGE_DIR, entry->d_name);
             DIR *sub = opendir(subpath);
             if (sub) {
