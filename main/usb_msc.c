@@ -1,6 +1,6 @@
 /*
- * usb_msc.c - USB Mass Storage Class using TinyUSB + SPI Flash FATFS
- * Uses wear levelling layer for the FATFS partition
+ * usb_msc.c - USB Composite Device (CDC ACM + MSC U盘)
+ * CDC ACM充当串口代替USB Serial/JTAG，MSC通过SPI Flash FATFS暴露为U盘
  */
 
 #include <stdio.h>
@@ -13,6 +13,7 @@
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
 #include "tinyusb_msc.h"
+#include "tinyusb_cdc_acm.h"
 #include "config.h"
 #include "usb_msc.h"
 
@@ -20,70 +21,26 @@ static const char *TAG = "USB_MSC";
 
 tinyusb_msc_storage_handle_t storage_hdl = NULL;
 
-/* USB descriptors */
-#define EPNUM_MSC       1
-#define TUSB_DESC_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_MSC_DESC_LEN)
+/* CDC RX buffer */
+static uint8_t rx_buf[CONFIG_TINYUSB_CDC_RX_BUFSIZE + 1];
 
-enum {
-    ITF_NUM_MSC = 0,
-    ITF_NUM_TOTAL
-};
-
-enum {
-    EDPT_MSC_OUT  = 0x01,
-    EDPT_MSC_IN   = 0x81,
-};
-
-static tusb_desc_device_t descriptor_config = {
-    .bLength = sizeof(descriptor_config),
-    .bDescriptorType = TUSB_DESC_DEVICE,
-    .bcdUSB = 0x0200,
-    .bDeviceClass = TUSB_CLASS_MISC,
-    .bDeviceSubClass = MISC_SUBCLASS_COMMON,
-    .bDeviceProtocol = MISC_PROTOCOL_IAD,
-    .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
-    .idVendor = 0x303A,
-    .idProduct = 0x4002,
-    .bcdDevice = 0x100,
-    .iManufacturer = 0x01,
-    .iProduct = 0x02,
-    .iSerialNumber = 0x03,
-    .bNumConfigurations = 0x01
-};
-
-static uint8_t const msc_fs_configuration_desc[] = {
-    TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, TUSB_DESC_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
-    TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 0, EDPT_MSC_OUT, EDPT_MSC_IN, 64),
-};
-
-static char const *string_desc_arr[] = {
-    (const char[]) { 0x09, 0x04 },
-    "ESP32-S3",
-    "MP3 Player",
-    "20260718",
-    "Storage",
-};
-
-static void storage_mount_changed_cb(tinyusb_msc_storage_handle_t handle, tinyusb_msc_event_t *event, void *arg)
+/**
+ * @brief CDC device RX callback
+ */
+void tinyusb_cdc_rx_callback(int itf, cdcacm_event_t *event)
 {
-    switch (event->id) {
-    case TINYUSB_MSC_EVENT_MOUNT_COMPLETE:
-        ESP_LOGI(TAG, "Storage %s", (event->mount_point == TINYUSB_MSC_STORAGE_MOUNT_APP) ? "mounted to APP" : "exposed to USB host");
-        break;
-    case TINYUSB_MSC_EVENT_MOUNT_FAILED:
-        ESP_LOGE(TAG, "Storage mount failed");
-        break;
-    case TINYUSB_MSC_EVENT_FORMAT_REQUIRED:
-        ESP_LOGW(TAG, "Format required");
-        break;
-    default:
-        break;
+    size_t rx_size = 0;
+    esp_err_t ret = tinyusb_cdcacm_read(itf, rx_buf, CONFIG_TINYUSB_CDC_RX_BUFSIZE, &rx_size);
+    if (ret == ESP_OK && rx_size > 0) {
+        // Echo back for now (simple serial monitor)
+        tinyusb_cdcacm_write_queue(itf, rx_buf, rx_size);
+        tinyusb_cdcacm_write_flush(itf, 0);
     }
 }
 
 void usb_msc_init(void)
 {
-    ESP_LOGI(TAG, "Initializing USB MSC");
+    ESP_LOGI(TAG, "Initializing USB Composite (CDC + MSC)");
 
     // Find FATFS partition
     const esp_partition_t *data_partition = esp_partition_find_first(
@@ -104,14 +61,14 @@ void usb_msc_init(void)
     }
 
     // Configure TinyUSB MSC storage
-    tinyusb_msc_storage_config_t storage_cfg = {
+    const tinyusb_msc_storage_config_t storage_cfg = {
         .mount_point = TINYUSB_MSC_STORAGE_MOUNT_USB,  // Expose to USB by default
+        .medium.wl_handle = wl_handle,
         .fat_fs = {
             .base_path = NULL,
             .config.max_files = 5,
             .format_flags = 0,
         },
-        .medium.wl_handle = wl_handle,
     };
 
     ret = tinyusb_msc_new_storage_spiflash(&storage_cfg, &storage_hdl);
@@ -120,21 +77,28 @@ void usb_msc_init(void)
         return;
     }
 
-    // Set callback
-    tinyusb_msc_set_storage_callback(storage_mount_changed_cb, NULL);
-
-    // Install TinyUSB driver
-    tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG();
-    tusb_cfg.descriptor.device = &descriptor_config;
-    tusb_cfg.descriptor.full_speed_config = msc_fs_configuration_desc;
-    tusb_cfg.descriptor.string = string_desc_arr;
-    tusb_cfg.descriptor.string_count = sizeof(string_desc_arr) / sizeof(string_desc_arr[0]);
-
+    // Install TinyUSB driver (default config handles composite descriptors)
+    const tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG();
     ret = tinyusb_driver_install(&tusb_cfg);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to install TinyUSB: %s", esp_err_to_name(ret));
         return;
     }
 
-    ESP_LOGI(TAG, "USB MSC initialized - connect USB to access storage");
+    // Initialize CDC ACM (virtual serial port)
+    tinyusb_config_cdcacm_t acm_cfg = {
+        .cdc_port = TINYUSB_CDC_ACM_0,
+        .callback_rx = &tinyusb_cdc_rx_callback,
+        .callback_rx_wanted_char = NULL,
+        .callback_line_state_changed = NULL,
+        .callback_line_coding_changed = NULL,
+    };
+    ret = tinyusb_cdcacm_init(&acm_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to init CDC ACM: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    ESP_LOGI(TAG, "USB Composite initialized: CDC ACM + MSC U盘");
+    ESP_LOGI(TAG, "Connect USB to PC - you'll see a serial port AND a removable disk");
 }
