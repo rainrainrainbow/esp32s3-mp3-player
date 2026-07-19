@@ -199,6 +199,13 @@ void tft_fill_screen(uint16_t color)
     }
 }
 
+void tft_draw_pixel(uint16_t x, uint16_t y, uint16_t color)
+{
+    if (x >= DISPLAY_WIDTH || y >= DISPLAY_HEIGHT) return;
+    tft_set_addr_window(x, y, x, y);
+    tft_send_data16(&color, 1);
+}
+
 void tft_show_image_file(const char *filepath)
 {
     if (!fb) {
