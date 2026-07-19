@@ -60,7 +60,7 @@
 #define IMAGE_DIR   "/spiflash/images"
 
 /* ========== Pin Mappings ========== */
-#define LEFT_BUTTON_GPIO  GPIO_NUM_0
+#define LEFT_BUTTON_GPIO  GPIO_NUM_3
 #define RIGHT_BUTTON_GPIO GPIO_NUM_43
 
 // UART for voice chip
