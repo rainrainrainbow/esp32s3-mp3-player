@@ -18,5 +18,6 @@ set(COMPONENT_REQUIRES
     nvs_flash 
     esp_timer 
     tinyusb
+    console
 )
 register_component()
