@@ -2,7 +2,7 @@ name: ESP32-S3 MP3 Player Build
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "minimal-player" ]
   workflow_dispatch:
 
 jobs:
@@ -22,17 +22,97 @@ jobs:
           . /opt/esp/idf/export.sh
           idf.py build
 
+      - name: Generate test files and create FATFS image
+        shell: bash
+        run: |
+          # Install tools
+          apt-get update -qq && apt-get install -y -qq dosfstools mtools 2>/dev/null || true
+
+          # Generate test MP3 (5s 440Hz sine wave, mono, 128kbps)
+          python3 -c "
+import struct, math, os
+
+# Generate raw PCM sine wave (44100Hz, 16-bit, mono, 5 seconds)
+sample_rate = 44100
+duration = 5
+frequency = 440
+num_samples = sample_rate * duration
+
+pcm = b''
+for i in range(num_samples):
+    sample = int(32767 * 0.3 * math.sin(2 * math.pi * frequency * i / sample_rate))
+    pcm += struct.pack('<h', sample)
+
+# Write as raw file
+with open('test.raw', 'wb') as f:
+    f.write(pcm)
+print('Raw PCM generated: %d bytes' % len(pcm))
+"
+
+          # Convert raw to MP3 using lame or ffmpeg
+          if command -v ffmpeg &>/dev/null; then
+            ffmpeg -f s16le -ar 44100 -ac 1 -i test.raw -codec:a libmp3lame -b:a 128k -y test.mp3 2>/dev/null
+          elif command -v lame &>/dev/null; then
+            lame -r -s 44.1 -b 128 test.raw test.mp3 2>/dev/null
+          else
+            # Fallback: install ffmpeg
+            apt-get install -y -qq ffmpeg 2>/dev/null || true
+            ffmpeg -f s16le -ar 44100 -ac 1 -i test.raw -codec:a libmp3lame -b:a 128k -y test.mp3 2>/dev/null
+          fi
+          ls -la test.mp3
+
+          # Generate test BMP (240x320 blue gradient)
+          python3 -c "
+import struct
+w, h = 240, 320
+row_size = (w * 3 + 3) & ~3
+pixel_size = row_size * h
+file_size = 14 + 40 + pixel_size
+with open('test.bmp', 'wb') as f:
+    f.write(struct.pack('<HIHHI', 0x4D42, file_size, 0, 0, 14 + 40))
+    f.write(struct.pack('<IiiHHIIiiII', 40, w, h, 1, 24, 0, pixel_size, 0, 0, 0, 0))
+    for y in range(h):
+        for x in range(w):
+            # Blue gradient: brighter at top
+            b = int(255 * (h - y) / h)
+            f.write(struct.pack('BBB', b, 0, 0))  # BGR: Blue
+        f.write(b'\x00' * (row_size - w * 3))
+print('test.bmp created: %dx%d' % (w, h))
+"
+
+          # Create FATFS image (must match storage partition: 0xBC0000 = 12320768 bytes)
+          # Storage offset = 0x310000 (after factory app at 0x10000, size 0x300000)
+          STORAGE_SIZE=12320768
+          dd if=/dev/zero of=storage.img bs=1 count=$STORAGE_SIZE 2>/dev/null
+          mkfs.fat -F 16 -S 4096 storage.img 2>/dev/null
+          
+          # Create directory structure and copy files
+          mmd -i storage.img ::/music 2>/dev/null || true
+          mmd -i storage.img ::/images 2>/dev/null || true
+          mmd -i storage.img ::/images/1 2>/dev/null || true
+          mcopy -i storage.img test.mp3 ::/music/1.mp3 2>/dev/null
+          mcopy -i storage.img test.bmp ::/images/1/1.bmp 2>/dev/null
+          
+          echo "FATFS image created: storage.img"
+          ls -la storage.img
+
       - name: Prepare Artifacts
         shell: bash
         run: |
           mkdir -p artifacts
+          # Copy individual binaries
           for f in build/bootloader/bootloader.bin build/partition_table/partition-table.bin build/esp32s3_mp3_player.bin; do
             if [ -f "$f" ]; then
               cp "$f" artifacts/
             fi
           done
+          # Copy storage image
+          cp storage.img artifacts/
+          
+          # Merge all into single firmware (bootloader + partition + app + storage)
           pip3 install esptool 2>/dev/null || true
-          python3 -m esptool --chip esp32s3 merge_bin --output artifacts/firmware_merged.bin --flash_mode qio --flash_freq 80m --flash_size 16MB 0x0 artifacts/bootloader.bin 0x8000 artifacts/partition-table.bin 0x10000 artifacts/esp32s3_mp3_player.bin || true
+          python3 -m esptool --chip esp32s3 merge_bin             --output artifacts/firmware_complete.bin             --flash_mode qio --flash_freq 80m --flash_size 16MB             0x0 artifacts/bootloader.bin             0x8000 artifacts/partition-table.bin             0x10000 artifacts/esp32s3_mp3_player.bin             0x310000 artifacts/storage.img || true
+          
           ls -la artifacts/
 
       - name: Upload firmware
@@ -43,7 +123,7 @@ jobs:
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/minimal-player'
         with:
           tag_name: build-${{ github.run_number }}
           name: "ESP32-S3 MP3 Player Build #${{ github.run_number }}"
