@@ -54,7 +54,19 @@ static uint8_t scan_images(void)
     uint8_t count = 0;
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
-        if (is_image_file(entry->d_name)) {
+        if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+            // Scan subdirectory
+            char subpath[320];
+            snprintf(subpath, sizeof(subpath), "%s/%s", IMAGE_DIR, entry->d_name);
+            DIR *sub = opendir(subpath);
+            if (sub) {
+                struct dirent *subentry;
+                while ((subentry = readdir(sub)) != NULL) {
+                    if (is_image_file(subentry->d_name)) count++;
+                }
+                closedir(sub);
+            }
+        } else if (is_image_file(entry->d_name)) {
             count++;
         }
     }
@@ -72,27 +84,45 @@ static void show_next_image(void)
         if (max_images == 0) return;
     }
 
+    // Collect all image paths (including subdirectories)
+    char image_paths[64][320];
+    uint8_t img_count = 0;
+
     DIR *dir = opendir(IMAGE_DIR);
     if (!dir) return;
 
-    uint8_t idx = 0;
     struct dirent *entry;
-    char filepath[320];
-
-    while ((entry = readdir(dir)) != NULL) {
-        if (!is_image_file(entry->d_name)) continue;
-        if (idx == current_image_index) {
-            snprintf(filepath, sizeof(filepath), "%s/%s", IMAGE_DIR, entry->d_name);
-            ESP_LOGI(TAG, "Showing image: %s", filepath);
-            tft_show_image_file(filepath);
-            closedir(dir);
-            current_image_index = (current_image_index + 1) % max_images;
-            return;
+    while ((entry = readdir(dir)) != NULL && img_count < 64) {
+        if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+            char subpath[320];
+            snprintf(subpath, sizeof(subpath), "%s/%s", IMAGE_DIR, entry->d_name);
+            DIR *sub = opendir(subpath);
+            if (sub) {
+                struct dirent *subentry;
+                while ((subentry = readdir(sub)) != NULL && img_count < 64) {
+                    if (is_image_file(subentry->d_name)) {
+                        snprintf(image_paths[img_count], sizeof(image_paths[0]), "%s/%s", subpath, subentry->d_name);
+                        img_count++;
+                    }
+                }
+                closedir(sub);
+            }
+        } else if (is_image_file(entry->d_name)) {
+            snprintf(image_paths[img_count], sizeof(image_paths[0]), "%s/%s", IMAGE_DIR, entry->d_name);
+            img_count++;
         }
-        idx++;
     }
     closedir(dir);
-    current_image_index = 0;
+
+    if (img_count == 0) {
+        current_image_index = 0;
+        return;
+    }
+
+    if (current_image_index >= img_count) current_image_index = 0;
+    ESP_LOGI(TAG, "Showing image %d/%d: %s", current_image_index + 1, img_count, image_paths[current_image_index]);
+    tft_show_image_file(image_paths[current_image_index]);
+    current_image_index = (current_image_index + 1) % img_count;
 }
 
 /* Image slideshow task - runs while music is playing */
@@ -119,7 +149,6 @@ static void status_update_task(void *param)
 #define DEBOUNCE_MS 50
 static void button_task(void *param)
 {
-    uint8_t prev_track = 0;
     uint8_t max_tracks = 0;
 
     // Count tracks on startup
@@ -135,7 +164,8 @@ static void button_task(void *param)
     ESP_LOGI(TAG, "Found %d MP3 tracks", max_tracks);
     if (max_tracks == 0) max_tracks = 255;
 
-    // Configure buttons as input with pull-up
+    // GPIO0 = BOOT button (short press=prev, long press>3s=USB mode)
+    // GPIO43 = next track
     gpio_set_direction(LEFT_BUTTON_GPIO, GPIO_MODE_INPUT);
     gpio_set_pull_mode(LEFT_BUTTON_GPIO, GPIO_PULLUP_ONLY);
     gpio_set_direction(RIGHT_BUTTON_GPIO, GPIO_MODE_INPUT);
@@ -147,22 +177,33 @@ static void button_task(void *param)
         bool right_pressed = (gpio_get_level(RIGHT_BUTTON_GPIO) == 0);
 
         if (left_pressed) {
-            vTaskDelay(pdMS_TO_TICKS(DEBOUNCE_MS));
+            vTaskDelay(pdMS_TO_TICKS(50));
             if (gpio_get_level(LEFT_BUTTON_GPIO) == 0) {
-                // Previous track
-                current = (current == 1) ? max_tracks : current - 1;
-                ESP_LOGI(TAG, "Button: prev track %d", current);
-                audio_player_play_track(current);
+                // Wait to distinguish short/long press
+                uint32_t press_ms = 0;
+                while (gpio_get_level(LEFT_BUTTON_GPIO) == 0 && press_ms < 3000) {
+                    vTaskDelay(pdMS_TO_TICKS(10));
+                    press_ms += 10;
+                }
+                if (press_ms >= 3000) {
+                    // Long press: switch to USB mode
+                    ESP_LOGI(TAG, "Long press: USB storage mode");
+                    usb_msc_switch_to_usb();
+                } else {
+                    // Short press: previous track
+                    current = (current == 1) ? max_tracks : current - 1;
+                    ESP_LOGI(TAG, "Prev track %d", current);
+                    audio_player_play_track(current);
+                }
                 while (gpio_get_level(LEFT_BUTTON_GPIO) == 0) vTaskDelay(pdMS_TO_TICKS(10));
             }
         }
 
         if (right_pressed) {
-            vTaskDelay(pdMS_TO_TICKS(DEBOUNCE_MS));
+            vTaskDelay(pdMS_TO_TICKS(50));
             if (gpio_get_level(RIGHT_BUTTON_GPIO) == 0) {
-                // Next track
                 current = (current >= max_tracks) ? 1 : current + 1;
-                ESP_LOGI(TAG, "Button: next track %d", current);
+                ESP_LOGI(TAG, "Next track %d", current);
                 audio_player_play_track(current);
                 while (gpio_get_level(RIGHT_BUTTON_GPIO) == 0) vTaskDelay(pdMS_TO_TICKS(10));
             }
@@ -231,6 +272,6 @@ void app_main(void)
     ESP_LOGI(TAG, "System ready");
     ESP_LOGI(TAG, " - I2C: Write 0x01 <track> to play");
     ESP_LOGI(TAG, " - I2C: Read 0x02 for status");
-    ESP_LOGI(TAG, " - GPIO0: Prev track, GPIO43: Next track");
-    ESP_LOGI(TAG, " - Connect USB to access storage");
+    ESP_LOGI(TAG, " - GPIO43: Next track");
+    ESP_LOGI(TAG, " - GPIO0 short=Prev, long>3s=USB mode");
 }
