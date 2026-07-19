@@ -137,7 +137,7 @@ void tft_init(void)
 
     spi_device_interface_config_t dev_cfg = {
         .mode = DISPLAY_SPI_MODE,
-        .clock_speed_hz = 80 * 1000 * 1000, // 80MHz
+        .clock_speed_hz = 40 * 1000 * 1000, // 80MHz
         .spics_io_num = DISPLAY_CS_GPIO,
         .queue_size = 1,
     };
@@ -167,13 +167,8 @@ void tft_init(void)
     vTaskDelay(pdMS_TO_TICKS(120));
     tft_send_cmd(CMD_DISPON);
 
-    // Allocate framebuffer
-    fb = heap_caps_malloc(DISPLAY_WIDTH * DISPLAY_HEIGHT * 2, MALLOC_CAP_DMA);
-    if (fb) {
-        ESP_LOGI(TAG, "Framebuffer allocated: %d bytes", DISPLAY_WIDTH * DISPLAY_HEIGHT * 2);
-    } else {
-        ESP_LOGW(TAG, "Cannot allocate framebuffer, using direct write");
-    }
+    // No framebuffer - use direct SPI write
+    fb = NULL;
 
     tft_fill_screen(0x0000); // black
     ESP_LOGI(TAG, "TFT initialized");
@@ -208,10 +203,7 @@ void tft_draw_pixel(uint16_t x, uint16_t y, uint16_t color)
 
 void tft_show_image_file(const char *filepath)
 {
-    if (!fb) {
-        ESP_LOGE(TAG, "No framebuffer");
-        return;
-    }
+    // Direct write, no framebuffer needed
 
     uint16_t width, height;
     uint16_t *pixels = NULL;
