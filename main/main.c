@@ -8,6 +8,7 @@
  * - MP3 playback from SPI flash FATFS via ES8311
  * - TFT image display (BMP slideshow)
  * - USB Mass Storage for file transfer
+ * - 音画同步: 播放 music/N.mp3 时轮播 images/N/ 下的图片
  */
 
 #include <stdio.h>
@@ -29,10 +30,6 @@
 
 static const char *TAG = "MAIN";
 
-// Image slideshow state
-static uint8_t current_image_index = 0;
-static uint8_t max_images = 0;
-
 /* Check if filename has an image extension */
 static bool is_image_file(const char *name)
 {
@@ -42,99 +39,49 @@ static bool is_image_file(const char *name)
     return false;
 }
 
-/* Scan for images in the images directory */
-static uint8_t scan_images(void)
-{
-    DIR *dir = opendir(IMAGE_DIR);
-    if (!dir) {
-        ESP_LOGW(TAG, "Cannot open %s", IMAGE_DIR);
-        return 0;
-    }
-
-    uint8_t count = 0;
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
-            // Scan subdirectory
-            char subpath[384];
-            snprintf(subpath, sizeof(subpath), "%s/%s", IMAGE_DIR, entry->d_name);
-            DIR *sub = opendir(subpath);
-            if (sub) {
-                struct dirent *subentry;
-                while ((subentry = readdir(sub)) != NULL) {
-                    if (is_image_file(subentry->d_name)) count++;
-                }
-                closedir(sub);
-            }
-        } else if (is_image_file(entry->d_name)) {
-            count++;
-        }
-    }
-    closedir(dir);
-    ESP_LOGI(TAG, "Found %d images", count);
-    max_images = count;
-    return count;
-}
-
-/* Show next image in slideshow */
-static void show_next_image(void)
-{
-    if (max_images == 0) {
-        scan_images();
-        if (max_images == 0) return;
-    }
-
-    // Collect all image paths (including subdirectories)
-    char image_paths[64][384];
-    uint8_t img_count = 0;
-
-    DIR *dir = opendir(IMAGE_DIR);
-    if (!dir) return;
-
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL && img_count < 64) {
-        if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
-            char subpath[384];
-            snprintf(subpath, sizeof(subpath), "%s/%s", IMAGE_DIR, entry->d_name);
-            DIR *sub = opendir(subpath);
-            if (sub) {
-                struct dirent *subentry;
-                while ((subentry = readdir(sub)) != NULL && img_count < 64) {
-                    if (is_image_file(subentry->d_name)) {
-                        strlcpy(image_paths[img_count], subpath, sizeof(image_paths[0]));
-                        strlcat(image_paths[img_count], "/", sizeof(image_paths[0]));
-                        strlcat(image_paths[img_count], subentry->d_name, sizeof(image_paths[0]));
-                        img_count++;
-                    }
-                }
-                closedir(sub);
-            }
-        } else if (is_image_file(entry->d_name)) {
-            strlcpy(image_paths[img_count], IMAGE_DIR, sizeof(image_paths[0]));
-            strlcat(image_paths[img_count], "/", sizeof(image_paths[0]));
-            strlcat(image_paths[img_count], entry->d_name, sizeof(image_paths[0]));
-            img_count++;
-        }
-    }
-    closedir(dir);
-
-    if (img_count == 0) {
-        current_image_index = 0;
-        return;
-    }
-
-    if (current_image_index >= img_count) current_image_index = 0;
-    ESP_LOGI(TAG, "Showing image %d/%d: %s", current_image_index + 1, img_count, image_paths[current_image_index]);
-    tft_show_image_file(image_paths[current_image_index]);
-    current_image_index = (current_image_index + 1) % img_count;
-}
-
-/* Image slideshow task - runs while music is playing */
+/* Image slideshow task - shows images from images/<track>/ folder matching current track */
 static void slideshow_task(void *param)
 {
+    uint8_t prev_track = 0;
+    char image_paths[64][384];
+    uint8_t img_count = 0;
+    uint8_t img_index = 0;
+
     while (1) {
         if (audio_player_get_state() == PLAYER_STATE_PLAYING) {
-            show_next_image();
+            uint8_t track = audio_player_get_current_track();
+
+            if (track != prev_track) {
+                // Track changed - scan the new image folder
+                prev_track = track;
+                img_count = 0;
+                img_index = 0;
+
+                char track_dir[64];
+                snprintf(track_dir, sizeof(track_dir), "%s/%d", IMAGE_DIR, track);
+                DIR *dir = opendir(track_dir);
+                if (dir) {
+                    struct dirent *entry;
+                    while ((entry = readdir(dir)) != NULL && img_count < 64) {
+                        if (is_image_file(entry->d_name)) {
+                            strlcpy(image_paths[img_count], track_dir, sizeof(image_paths[0]));
+                            strlcat(image_paths[img_count], "/", sizeof(image_paths[0]));
+                            strlcat(image_paths[img_count], entry->d_name, sizeof(image_paths[0]));
+                            img_count++;
+                        }
+                    }
+                    closedir(dir);
+                    ESP_LOGI(TAG, "Track %d: found %d images in %s", track, img_count, track_dir);
+                } else {
+                    ESP_LOGW(TAG, "No image folder for track %d: %s", track, track_dir);
+                }
+            }
+
+            if (img_count > 0) {
+                ESP_LOGI(TAG, "Showing image %d/%d: %s", img_index + 1, img_count, image_paths[img_index]);
+                tft_show_image_file(image_paths[img_index]);
+                img_index = (img_index + 1) % img_count;
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
@@ -254,17 +201,12 @@ void app_main(void)
     // Initialize USB MSC (U盘)
     usb_msc_init();
 
-    // Scan for images
-    scan_images();
+    // Show startup screen (blue)
+    tft_fill_screen(0x001F);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    tft_fill_screen(0x0000);
 
-    // Show first image if available
-    if (max_images > 0) {
-        show_next_image();
-    } else {
-        tft_fill_screen(0x001F);
-    }
-
-    // Start slideshow task
+    // Start slideshow task (音画同步: images/<track>/ → music/<track>.mp3)
     xTaskCreatePinnedToCore(slideshow_task, "slideshow", 4096, NULL, 1, NULL, 1);
 
     // Start status update task
@@ -274,6 +216,7 @@ void app_main(void)
     xTaskCreatePinnedToCore(button_task, "buttons", 3072, NULL, 5, NULL, 1);
 
     ESP_LOGI(TAG, "System ready");
+    ESP_LOGI(TAG, " - 音画同步: music/N.mp3 + images/N/ 图片轮播");
     ESP_LOGI(TAG, " - I2C: Write 0x01 <track> to play");
     ESP_LOGI(TAG, " - I2C: Read 0x02 for status");
     ESP_LOGI(TAG, " - GPIO43: Next track");
