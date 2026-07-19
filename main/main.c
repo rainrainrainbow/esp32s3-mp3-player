@@ -1,14 +1,14 @@
 /*
- * main.c - ESP32-S3 MP3 Player with I2C slave control
+ * main.c - ESP32-S3 MP3 Player (minimal-player branch)
  *
+ * Minimal playback: one feature at a time
  * Hardware: ESP32-S3 N16R8, OPI PSRAM, ES8311, 240x320 TFT
- * 
+ *
  * Features:
- * - I2C slave at 0x52, registers: 0x01=track, 0x02=status
  * - MP3 playback from SPI flash FATFS via ES8311
- * - TFT image display (BMP slideshow)
- * - USB Mass Storage for file transfer
- * - 音画同步: 播放 music/N.mp3 时轮播 images/N/ 下的图片
+ * - TFT image display (BMP slideshow, synced with track)
+ * - GPIO0 = Prev track, GPIO43 = Next track
+ * - Display "STOP" on screen when idle
  */
 
 #include <stdio.h>
@@ -23,12 +23,12 @@
 #include "config.h"
 #include "tft_driver.h"
 #include "audio_player.h"
-#include "i2c_slave.h"
-#include "usb_msc.h"
 #include "fatfs_manager.h"
 #include "image_decoder.h"
 
 static const char *TAG = "MAIN";
+
+static uint8_t current_track = 0;
 
 /* Check if filename has an image extension */
 static bool is_image_file(const char *name)
@@ -39,7 +39,160 @@ static bool is_image_file(const char *name)
     return false;
 }
 
-/* Image slideshow task - shows images from images/<track>/ folder matching current track */
+/* 5x7 pixel font bitmap for basic characters */
+static const uint8_t font5x7[95][5] = {
+    {0x00,0x00,0x00,0x00,0x00}, // space
+    {0x00,0x00,0x5F,0x00,0x00}, // !
+    {0x00,0x07,0x00,0x07,0x00}, // "
+    {0x14,0x7F,0x14,0x7F,0x14}, // #
+    {0x24,0x2A,0x7F,0x2A,0x12}, // $
+    {0x23,0x13,0x08,0x64,0x62}, // %
+    {0x36,0x49,0x55,0x22,0x50}, // &
+    {0x00,0x05,0x03,0x00,0x00}, // '
+    {0x00,0x1C,0x22,0x41,0x00}, // (
+    {0x00,0x41,0x22,0x1C,0x00}, // )
+    {0x08,0x2A,0x1C,0x2A,0x08}, // *
+    {0x08,0x08,0x3E,0x08,0x08}, // +
+    {0x00,0x50,0x30,0x00,0x00}, // ,
+    {0x08,0x08,0x08,0x08,0x08}, // -
+    {0x00,0x60,0x60,0x00,0x00}, // .
+    {0x20,0x10,0x08,0x04,0x02}, // /
+    {0x3E,0x51,0x49,0x45,0x3E}, // 0
+    {0x00,0x42,0x7F,0x40,0x00}, // 1
+    {0x42,0x61,0x51,0x49,0x46}, // 2
+    {0x21,0x41,0x45,0x4B,0x31}, // 3
+    {0x18,0x14,0x12,0x7F,0x10}, // 4
+    {0x27,0x45,0x45,0x45,0x39}, // 5
+    {0x3C,0x4A,0x49,0x49,0x30}, // 6
+    {0x01,0x71,0x09,0x05,0x03}, // 7
+    {0x36,0x49,0x49,0x49,0x36}, // 8
+    {0x06,0x49,0x49,0x29,0x1E}, // 9
+    {0x00,0x36,0x36,0x00,0x00}, // :
+    {0x00,0x56,0x36,0x00,0x00}, // ;
+    {0x00,0x08,0x14,0x22,0x41}, // <
+    {0x14,0x14,0x14,0x14,0x14}, // =
+    {0x41,0x22,0x14,0x08,0x00}, // >
+    {0x02,0x01,0x51,0x09,0x06}, // ?
+    {0x32,0x49,0x79,0x41,0x3E}, // @
+    {0x7E,0x11,0x11,0x11,0x7E}, // A
+    {0x7F,0x49,0x49,0x49,0x36}, // B
+    {0x3E,0x41,0x41,0x41,0x22}, // C
+    {0x7F,0x41,0x41,0x22,0x1C}, // D
+    {0x7F,0x49,0x49,0x49,0x41}, // E
+    {0x7F,0x09,0x09,0x01,0x01}, // F
+    {0x3E,0x41,0x41,0x51,0x32}, // G
+    {0x7F,0x08,0x08,0x08,0x7F}, // H
+    {0x00,0x41,0x7F,0x41,0x00}, // I
+    {0x20,0x40,0x41,0x3F,0x01}, // J
+    {0x7F,0x08,0x14,0x22,0x41}, // K
+    {0x7F,0x40,0x40,0x40,0x40}, // L
+    {0x7F,0x02,0x04,0x02,0x7F}, // M
+    {0x7F,0x04,0x08,0x10,0x7F}, // N
+    {0x3E,0x41,0x41,0x41,0x3E}, // O
+    {0x7F,0x09,0x09,0x09,0x06}, // P
+    {0x3E,0x41,0x51,0x21,0x5E}, // Q
+    {0x7F,0x09,0x19,0x29,0x46}, // R
+    {0x46,0x49,0x49,0x49,0x31}, // S
+    {0x01,0x01,0x7F,0x01,0x01}, // T
+    {0x3F,0x40,0x40,0x40,0x3F}, // U
+    {0x1F,0x20,0x40,0x20,0x1F}, // V
+    {0x7F,0x20,0x18,0x20,0x7F}, // W
+    {0x63,0x14,0x08,0x14,0x63}, // X
+    {0x03,0x04,0x78,0x04,0x03}, // Y
+    {0x61,0x51,0x49,0x45,0x43}, // Z
+    {0x00,0x00,0x7F,0x41,0x41}, // [
+    {0x02,0x04,0x08,0x10,0x20}, // backslash
+    {0x41,0x41,0x7F,0x00,0x00}, // ]
+    {0x04,0x02,0x01,0x02,0x04}, // ^
+    {0x40,0x40,0x40,0x40,0x40}, // _
+    {0x00,0x01,0x02,0x04,0x00}, // `
+    {0x20,0x54,0x54,0x54,0x78}, // a
+    {0x7F,0x48,0x44,0x44,0x38}, // b
+    {0x38,0x44,0x44,0x44,0x20}, // c
+    {0x38,0x44,0x44,0x48,0x7F}, // d
+    {0x38,0x54,0x54,0x54,0x18}, // e
+    {0x08,0x7E,0x09,0x01,0x02}, // f
+    {0x08,0x14,0x54,0x54,0x3C}, // g
+    {0x7F,0x08,0x04,0x04,0x78}, // h
+    {0x00,0x44,0x7D,0x40,0x00}, // i
+    {0x20,0x40,0x44,0x3D,0x00}, // j
+    {0x00,0x7F,0x10,0x28,0x44}, // k
+    {0x00,0x41,0x7F,0x40,0x00}, // l
+    {0x7C,0x04,0x18,0x04,0x78}, // m
+    {0x7C,0x08,0x04,0x04,0x78}, // n
+    {0x38,0x44,0x44,0x44,0x38}, // o
+    {0x7C,0x14,0x14,0x14,0x08}, // p
+    {0x08,0x14,0x14,0x18,0x7C}, // q
+    {0x7C,0x08,0x04,0x04,0x08}, // r
+    {0x48,0x54,0x54,0x54,0x20}, // s
+    {0x04,0x3F,0x44,0x40,0x20}, // t
+    {0x3C,0x40,0x40,0x20,0x7C}, // u
+    {0x1C,0x20,0x40,0x20,0x1C}, // v
+    {0x3C,0x40,0x30,0x40,0x3C}, // w
+    {0x44,0x28,0x10,0x28,0x44}, // x
+    {0x0C,0x50,0x50,0x50,0x3C}, // y
+    {0x44,0x64,0x54,0x4C,0x44}, // z
+};
+
+/* Draw a character at (x, y) with given color */
+static void draw_char(uint16_t x, uint16_t y, char c, uint16_t color)
+{
+    if (c < 32 || c > 126) c = 32;
+    int idx = c - 32;
+    for (int col = 0; col < 5; col++) {
+        uint8_t line = font5x7[idx][col];
+        for (int row = 0; row < 7; row++) {
+            if (line & (1 << row)) {
+                // Draw a 2x2 pixel block for visibility
+                tft_draw_pixel(x + col*2, y + row*2, color);
+                tft_draw_pixel(x + col*2 + 1, y + row*2, color);
+                tft_draw_pixel(x + col*2, y + row*2 + 1, color);
+                tft_draw_pixel(x + col*2 + 1, y + row*2 + 1, color);
+            }
+        }
+    }
+}
+
+/* Draw a string at (x, y) */
+static void draw_string(uint16_t x, uint16_t y, const char *str, uint16_t color)
+{
+    while (*str) {
+        draw_char(x, y, *str, color);
+        x += 12; // 5px char + 1px gap, doubled = 12
+        str++;
+    }
+}
+
+/* Display STOP screen */
+static void display_stop(void)
+{
+    tft_fill_screen(0x0000);
+    draw_string(72, 140, "STOP", 0xF800); // Red STOP at center
+}
+
+/* Show first image from images/<track>/ folder */
+static void show_track_image(uint8_t track)
+{
+    char track_dir[64];
+    snprintf(track_dir, sizeof(track_dir), "%s/%d", IMAGE_DIR, track);
+    
+    DIR *dir = opendir(track_dir);
+    if (!dir) return;
+    
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (is_image_file(entry->d_name)) {
+            char img_path[384];
+            snprintf(img_path, sizeof(img_path), "%s/%s", track_dir, entry->d_name);
+            closedir(dir);
+            tft_show_image_file(img_path);
+            return;
+        }
+    }
+    closedir(dir);
+}
+
+/* Slideshow task - shows images from images/<track>/ while playing */
 static void slideshow_task(void *param)
 {
     uint8_t prev_track = 0;
@@ -52,7 +205,6 @@ static void slideshow_task(void *param)
             uint8_t track = audio_player_get_current_track();
 
             if (track != prev_track) {
-                // Track changed - scan the new image folder
                 prev_track = track;
                 img_count = 0;
                 img_index = 0;
@@ -71,39 +223,30 @@ static void slideshow_task(void *param)
                         }
                     }
                     closedir(dir);
-                    ESP_LOGI(TAG, "Track %d: found %d images in %s", track, img_count, track_dir);
-                } else {
-                    ESP_LOGW(TAG, "No image folder for track %d: %s", track, track_dir);
+                    ESP_LOGI(TAG, "Track %d: %d images", track, img_count);
                 }
             }
 
             if (img_count > 0) {
-                ESP_LOGI(TAG, "Showing image %d/%d: %s", img_index + 1, img_count, image_paths[img_index]);
+                ESP_LOGI(TAG, "Image %d/%d", img_index + 1, img_count);
                 tft_show_image_file(image_paths[img_index]);
                 img_index = (img_index + 1) % img_count;
             }
+        } else {
+            // Not playing - show STOP
+            display_stop();
+            prev_track = 0;
         }
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
 }
 
-/* I2C status update task */
-static void status_update_task(void *param)
-{
-    while (1) {
-        i2c_slave_write_reg(REG_PLAY_STATUS, (uint8_t)audio_player_get_state());
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-}
-
-/* Button task - GPIO0 prev, GPIO43 next */
-#define DEBOUNCE_MS 50
+/* Button task */
 static void button_task(void *param)
 {
-    uint8_t max_tracks = 0;
-
-    // Count tracks on startup
+    // Count tracks
     DIR *dir = opendir(MUSIC_DIR);
+    uint8_t max_tracks = 0;
     if (dir) {
         struct dirent *entry;
         while ((entry = readdir(dir)) != NULL) {
@@ -115,48 +258,33 @@ static void button_task(void *param)
     ESP_LOGI(TAG, "Found %d MP3 tracks", max_tracks);
     if (max_tracks == 0) max_tracks = 255;
 
-    // GPIO0 = BOOT button (short press=prev, long press>3s=USB mode)
-    // GPIO43 = next track
-    gpio_set_direction(LEFT_BUTTON_GPIO, GPIO_MODE_INPUT);
-    gpio_set_pull_mode(LEFT_BUTTON_GPIO, GPIO_PULLUP_ONLY);
-    gpio_set_direction(RIGHT_BUTTON_GPIO, GPIO_MODE_INPUT);
-    gpio_set_pull_mode(RIGHT_BUTTON_GPIO, GPIO_PULLUP_ONLY);
+    gpio_set_direction(GPIO_NUM_0, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(GPIO_NUM_0, GPIO_PULLUP_ONLY);
+    gpio_set_direction(GPIO_NUM_43, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(GPIO_NUM_43, GPIO_PULLUP_ONLY);
 
     uint8_t current = 1;
     while (1) {
-        bool left_pressed = (gpio_get_level(LEFT_BUTTON_GPIO) == 0);
-        bool right_pressed = (gpio_get_level(RIGHT_BUTTON_GPIO) == 0);
+        bool prev_pressed = (gpio_get_level(GPIO_NUM_0) == 0);
+        bool next_pressed = (gpio_get_level(GPIO_NUM_43) == 0);
 
-        if (left_pressed) {
+        if (prev_pressed) {
             vTaskDelay(pdMS_TO_TICKS(50));
-            if (gpio_get_level(LEFT_BUTTON_GPIO) == 0) {
-                // Wait to distinguish short/long press
-                uint32_t press_ms = 0;
-                while (gpio_get_level(LEFT_BUTTON_GPIO) == 0 && press_ms < 3000) {
-                    vTaskDelay(pdMS_TO_TICKS(10));
-                    press_ms += 10;
-                }
-                if (press_ms >= 3000) {
-                    // Long press: switch to USB mode
-                    ESP_LOGI(TAG, "Long press: USB storage mode");
-                    usb_msc_switch_to_usb();
-                } else {
-                    // Short press: previous track
-                    current = (current == 1) ? max_tracks : current - 1;
-                    ESP_LOGI(TAG, "Prev track %d", current);
-                    audio_player_play_track(current);
-                }
-                while (gpio_get_level(LEFT_BUTTON_GPIO) == 0) vTaskDelay(pdMS_TO_TICKS(10));
+            if (gpio_get_level(GPIO_NUM_0) == 0) {
+                current = (current == 1) ? max_tracks : current - 1;
+                ESP_LOGI(TAG, "Prev track %d", current);
+                audio_player_play_track(current);
+                while (gpio_get_level(GPIO_NUM_0) == 0) vTaskDelay(pdMS_TO_TICKS(10));
             }
         }
 
-        if (right_pressed) {
+        if (next_pressed) {
             vTaskDelay(pdMS_TO_TICKS(50));
-            if (gpio_get_level(RIGHT_BUTTON_GPIO) == 0) {
+            if (gpio_get_level(GPIO_NUM_43) == 0) {
                 current = (current >= max_tracks) ? 1 : current + 1;
                 ESP_LOGI(TAG, "Next track %d", current);
                 audio_player_play_track(current);
-                while (gpio_get_level(RIGHT_BUTTON_GPIO) == 0) vTaskDelay(pdMS_TO_TICKS(10));
+                while (gpio_get_level(GPIO_NUM_43) == 0) vTaskDelay(pdMS_TO_TICKS(10));
             }
         }
 
@@ -166,13 +294,7 @@ static void button_task(void *param)
 
 void app_main(void)
 {
-    ESP_LOGI(TAG, "========================================");
-    ESP_LOGI(TAG, "ESP32-S3 MP3 Player Starting...");
-    ESP_LOGI(TAG, "Board: ESP32-S3 N16R8 + OPI PSRAM");
-    ESP_LOGI(TAG, "Audio: ES8311 via I2S");
-    ESP_LOGI(TAG, "Display: 240x320 TFT SPI");
-    ESP_LOGI(TAG, "I2C Slave: 0x%02X", I2C_SLAVE_ADDR);
-    ESP_LOGI(TAG, "========================================");
+    ESP_LOGI(TAG, "=== Minimal MP3 Player ===");
 
     // Initialize NVS
     esp_err_t ret = nvs_flash_init();
@@ -182,43 +304,28 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
-    // Initialize TFT display
+    // Initialize TFT
     tft_init();
-    tft_fill_screen(0x0000);
 
-    // Initialize audio player
+    // Initialize audio
     audio_player_init();
 
-    // Mount SPI flash FATFS
+    // Mount FATFS
     if (!fatfs_mount_spiflash()) {
-        ESP_LOGE(TAG, "FATFS mount failed - check partition table");
+        ESP_LOGE(TAG, "FATFS mount failed");
         tft_fill_screen(0xF800);
+        return;
     }
 
-    // Initialize I2C slave
-    i2c_slave_init();
+    // Show STOP screen
+    display_stop();
 
-    // Initialize USB MSC (U盘)
-    usb_msc_init();
-
-    // Show startup screen (blue)
-    tft_fill_screen(0x001F);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    tft_fill_screen(0x0000);
-
-    // Start slideshow task (音画同步: images/<track>/ → music/<track>.mp3)
+    // Start slideshow task
     xTaskCreatePinnedToCore(slideshow_task, "slideshow", 4096, NULL, 1, NULL, 1);
 
-    // Start status update task
-    xTaskCreatePinnedToCore(status_update_task, "status_upd", 2048, NULL, 1, NULL, 1);
-
-    // Start button task (GPIO0=prev, GPIO43=next)
+    // Start button task
     xTaskCreatePinnedToCore(button_task, "buttons", 3072, NULL, 5, NULL, 1);
 
     ESP_LOGI(TAG, "System ready");
-    ESP_LOGI(TAG, " - 音画同步: music/N.mp3 + images/N/ 图片轮播");
-    ESP_LOGI(TAG, " - I2C: Write 0x01 <track> to play");
-    ESP_LOGI(TAG, " - I2C: Read 0x02 for status");
-    ESP_LOGI(TAG, " - GPIO43: Next track");
-    ESP_LOGI(TAG, " - GPIO0 short=Prev, long>3s=USB mode");
+    ESP_LOGI(TAG, "GPIO0=Prev, GPIO43=Next");
 }
