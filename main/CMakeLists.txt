@@ -16,6 +16,7 @@ set(COMPONENT_REQUIRES
     spi_flash 
     wear_levelling 
     nvs_flash 
-    esp_timer
+    esp_timer 
+    tinyusb
 )
 register_component()
