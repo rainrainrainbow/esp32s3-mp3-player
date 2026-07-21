@@ -13,8 +13,31 @@ open('test.raw', 'wb').write(p)
 "
 ffmpeg -f s16le -ar 44100 -ac 1 -i test.raw -codec:a libmp3lame -b:a 128k -y test.mp3 2>/dev/null
 
-# Generate BMP (240x320 blue gradient)
-python3 /tmp/gen_bmp.py
+# Generate BMP (240x320 blue-green gradient)
+python3 -c "
+import struct
+W, H = 240, 320
+# BMP header (24-bit, no compression)
+row_size = ((W * 3 + 3) // 4) * 4
+file_size = 14 + 40 + row_size * H
+buf = b''
+# File header
+buf += struct.pack('<2sIHHI', b'BM', file_size, 0, 0, 14 + 40)
+# DIB header
+buf += struct.pack('<IiiHHIIiiII', 40, W, H, 1, 24, 0, row_size * H, 2835, 2835, 0, 0)
+# Pixel data (BGR, bottom-up)
+for y in range(H - 1, -1, -1):
+    row = b''
+    for x in range(W):
+        r = int(255 * x / W)
+        g = int(255 * y / H)
+        b = int(128 + 127 * (x / W))
+        row += struct.pack('BBB', int(b*0.5), g, r)
+    row += b'\x00' * (row_size - W * 3)
+    buf += row
+open('test.bmp', 'wb').write(buf)
+print('BMP generated:', W, 'x', H)
+"
 
 # Create FATFS
 STORAGE_SIZE=12320768
