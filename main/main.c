@@ -311,14 +311,10 @@ void app_main(void)
     // Initialize audio
     audio_player_init();
 
-    // Mount FATFS
-    if (!fatfs_mount_spiflash()) {
-        ESP_LOGE(TAG, "FATFS mount failed");
-        tft_fill_screen(0xF800);
-        return;
-    }
-
-    // Initialize USB (CDC ACM + MSC)
+    // Initialize USB (CDC ACM + MSC) - also mounts FATFS
+    // Create default directories
+    mkdir(MUSIC_DIR, 0777);
+    mkdir(IMAGE_DIR, 0777);
     usb_msc_init();
 
     // Show STOP screen
