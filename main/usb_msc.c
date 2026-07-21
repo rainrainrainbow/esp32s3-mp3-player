@@ -60,8 +60,8 @@ void usb_msc_init(void)
         .mount_point = TINYUSB_MSC_STORAGE_MOUNT_APP,
         .medium.wl_handle = wl_handle,
         .fat_fs = {
-            .base_path = NULL,
-            .config.max_files = 5,
+            .base_path = "/spiflash",
+            .config.max_files = 10,
             .format_flags = 0,
         },
     };
