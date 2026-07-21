@@ -250,8 +250,8 @@ static void button_task(void *param)
     // Count tracks
     DIR *dir = opendir(MUSIC_DIR);
     uint8_t max_tracks = 0;
+    struct dirent *entry;
     if (dir) {
-        struct dirent *entry;
         while ((entry = readdir(dir)) != NULL) {
             const char *ext = strrchr(entry->d_name, '.');
             if (ext && strcasecmp(ext, ".mp3") == 0) max_tracks++;
