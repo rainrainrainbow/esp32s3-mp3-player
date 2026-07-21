@@ -10,6 +10,7 @@
 #include <dirent.h>
 #include "esp_log.h"
 #include "esp_check.h"
+#include "esp_vfs_fat.h"
 #include "esp_partition.h"
 #include "wear_levelling.h"
 #include "tinyusb.h"
