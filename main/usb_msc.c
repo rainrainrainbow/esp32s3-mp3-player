@@ -22,7 +22,6 @@
 static const char *TAG = "USB_MSC";
 
 tinyusb_msc_storage_handle_t storage_hdl = NULL;
-static wl_handle_t wl_handle = WL_INVALID_HANDLE;
 
 /* Redirect esp_log to CDC ACM so serial monitor shows output */
 static int cdc_log_vprintf(const char *fmt, va_list args)
