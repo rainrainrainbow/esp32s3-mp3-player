@@ -2,8 +2,6 @@ set(COMPONENT_SRCS
     "main.c" 
     "tft_driver.c" 
     "audio_player.c" 
-    "i2c_slave.c" 
-    "usb_msc.c" 
     "fatfs_manager.c"
     "image_decoder.c"
     "minimp3.c"
@@ -16,8 +14,6 @@ set(COMPONENT_REQUIRES
     spi_flash 
     wear_levelling 
     nvs_flash 
-    esp_timer 
-    tinyusb
-    console
+    esp_timer
 )
 register_component()
