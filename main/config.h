@@ -61,7 +61,7 @@
 
 /* ========== Pin Mappings ========== */
 #define LEFT_BUTTON_GPIO  GPIO_NUM_3
-#define RIGHT_BUTTON_GPIO GPIO_NUM_43
+#define RIGHT_BUTTON_GPIO GPIO_NUM_3
 
 // UART for voice chip
 #define UART0_RXD     GPIO_NUM_44
