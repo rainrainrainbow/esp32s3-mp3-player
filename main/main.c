@@ -24,6 +24,7 @@
 #include "tft_driver.h"
 #include "audio_player.h"
 #include "fatfs_manager.h"
+#include "usb_msc.h"
 #include "image_decoder.h"
 
 static const char *TAG = "MAIN";
@@ -316,6 +317,9 @@ void app_main(void)
         tft_fill_screen(0xF800);
         return;
     }
+
+    // Initialize USB (CDC ACM + MSC)
+    usb_msc_init();
 
     // Show STOP screen
     display_stop();
