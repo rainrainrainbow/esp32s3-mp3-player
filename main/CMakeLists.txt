@@ -5,6 +5,7 @@ set(COMPONENT_SRCS
     "fatfs_manager.c"
     "image_decoder.c"
     "minimp3.c"
+    "usb_msc.c"
 )
 set(COMPONENT_ADD_INCLUDEDIRS ".")
 set(COMPONENT_REQUIRES 
@@ -15,5 +16,6 @@ set(COMPONENT_REQUIRES
     wear_levelling 
     nvs_flash 
     esp_timer
+    tinyusb
 )
 register_component()
