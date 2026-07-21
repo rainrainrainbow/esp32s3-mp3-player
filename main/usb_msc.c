@@ -73,12 +73,7 @@ void usb_msc_init(void)
     }
 
     // Install TinyUSB driver
-    tinyusb_config_t tusb_cfg = {
-        .device_descriptor = NULL,
-        .string_descriptor = NULL,
-        .external_phy = false,
-        .configuration_descriptor = NULL,
-    };
+    const tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG();
     ret = tinyusb_driver_install(&tusb_cfg);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to install TinyUSB: %s", esp_err_to_name(ret));
