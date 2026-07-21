@@ -259,7 +259,23 @@ static void button_task(void *param)
         closedir(dir);
     }
     ESP_LOGI(TAG, "Found %d MP3 tracks", max_tracks);
-    if (max_tracks == 0) max_tracks = 255;
+    if (max_tracks == 0) {
+        // Try to create dir and re-scan (user may have added files via USB)
+        mkdir(MUSIC_DIR, 0777);
+        dir = opendir(MUSIC_DIR);
+        if (dir) {
+            while ((entry = readdir(dir)) != NULL) {
+                const char *ext = strrchr(entry->d_name, '.');
+                if (ext && strcasecmp(ext, ".mp3") == 0) max_tracks++;
+            }
+            closedir(dir);
+        }
+        ESP_LOGI(TAG, "Re-scan: %d MP3 tracks", max_tracks);
+    }
+    if (max_tracks == 0) {
+        ESP_LOGW(TAG, "No MP3 files found! Put files in music/ folder via USB");
+        max_tracks = 1; // default to 1 so user can manually name files
+    }
 
     gpio_set_direction(GPIO_NUM_0, GPIO_MODE_INPUT);
     gpio_set_pull_mode(GPIO_NUM_0, GPIO_PULLUP_ONLY);
@@ -314,10 +330,10 @@ void app_main(void)
     audio_player_init();
 
     // Initialize USB (CDC ACM + MSC) - also mounts FATFS
-    // Create default directories
+    usb_msc_init();
+    // Create default directories after FS is mounted
     mkdir(MUSIC_DIR, 0777);
     mkdir(IMAGE_DIR, 0777);
-    usb_msc_init();
 
     // Show STOP screen
     display_stop();
