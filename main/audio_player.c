@@ -16,6 +16,7 @@
 #include "audio_player.h"
 
 #include "minimp3.h"
+#include "esp_heap_caps.h"
 
 static const char *TAG = "AUDIO";
 
@@ -106,7 +107,14 @@ static void audio_playback_task(void *param)
     size_t bytes_read = fread(mp3_buf, 1, fsize, f); fclose(f);
     mp3dec_t dec; mp3dec_init(&dec);
     mp3dec_frame_info_t info;
-    int16_t pcm_buf[MINIMP3_MAX_SAMPLES_PER_FRAME];
+    int16_t *pcm_buf = (int16_t*)heap_caps_malloc(MINIMP3_MAX_SAMPLES_PER_FRAME * sizeof(int16_t), MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
+    int16_t *mono = (int16_t*)heap_caps_malloc(1152 * sizeof(int16_t), MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
+    if (!pcm_buf || !mono) {
+        ESP_LOGE(TAG, "OOM for audio buffers");
+        free(mp3_buf); free(pcm_buf); free(mono);
+        player_state = PLAYER_STATE_STOPPED; audio_task_running = false; audio_task_handle = NULL;
+        vTaskDelete(NULL); return;
+    }
     uint8_t *input = mp3_buf; int bytes_left = bytes_read;
     gpio_set_level(AUDIO_CODEC_PA_PIN, 1);
     player_state = PLAYER_STATE_PLAYING; audio_task_running = true;
@@ -118,7 +126,6 @@ static void audio_playback_task(void *param)
             int channels = info.channels; int frames = samples / channels;
             size_t written = 0;
             if (channels == 2) {
-                int16_t mono[1152];
                 for (int i = 0; i < frames && i < 1152; i++) mono[i] = ((int32_t)pcm_buf[i*2] + (int32_t)pcm_buf[i*2+1]) >> 1;
                 i2s_channel_write(i2s_tx_handle, mono, frames * sizeof(int16_t), &written, portMAX_DELAY);
             } else {
@@ -126,6 +133,7 @@ static void audio_playback_task(void *param)
             }
         }
     }
+    free(pcm_buf); free(mono);
     ESP_LOGI(TAG, "Playback finished");
     free(mp3_buf); gpio_set_level(AUDIO_CODEC_PA_PIN, 0);
     player_state = PLAYER_STATE_STOPPED; audio_task_running = false; audio_task_handle = NULL;
@@ -139,7 +147,7 @@ bool audio_player_play_track(uint8_t track_num)
     if (track_num < 1) return false;
     if (player_state == PLAYER_STATE_PLAYING || player_state == PLAYER_STATE_PAUSED) audio_player_stop();
     current_track = track_num; player_state = PLAYER_STATE_PLAYING;
-    xTaskCreatePinnedToCore(audio_playback_task, "audio_play", 8192, (void*)(uint32_t)track_num, 5, &audio_task_handle, 1);
+    xTaskCreatePinnedToCore(audio_playback_task, "audio_play", 16384, (void*)(uint32_t)track_num, 5, &audio_task_handle, 1);
     return true;
 }
 
