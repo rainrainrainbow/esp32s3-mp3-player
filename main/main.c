@@ -15,8 +15,12 @@
 #include <string.h>
 #include <stdlib.h>
 #include <dirent.h>
+#include <errno.h>
 #include <sys/stat.h>
+#include <math.h>
+#include <errno.h>
 #include <sys/stat.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -283,6 +287,16 @@ static void button_task(void *param)
     gpio_set_pull_mode(GPIO_NUM_43, GPIO_PULLUP_ONLY);
 
     uint8_t current = 1;
+    
+    // Check if GPIO0 is held at boot for test tone
+    if (gpio_get_level(GPIO_NUM_0) == 0) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        if (gpio_get_level(GPIO_NUM_0) == 0) {
+            ESP_LOGI(TAG, "GPIO0 held - playing test tone");
+            play_test_tone();
+        }
+    }
+
     while (1) {
         bool prev_pressed = (gpio_get_level(GPIO_NUM_0) == 0);
         bool next_pressed = (gpio_get_level(GPIO_NUM_43) == 0);
@@ -331,10 +345,46 @@ void app_main(void)
 
     // Initialize USB (CDC ACM + MSC) - also mounts FATFS
     usb_msc_init();
-    vTaskDelay(pdMS_TO_TICKS(100)); // Let TinyUSB settle
+    vTaskDelay(pdMS_TO_TICKS(200)); // Let TinyUSB settle
+
     // Create default directories after FS is mounted
     mkdir(MUSIC_DIR, 0777);
     mkdir(IMAGE_DIR, 0777);
+
+    // ===== DEBUG: List all files in /spiflash =====
+    ESP_LOGI(TAG, "=== Listing /spiflash/ ===");
+    DIR *d = opendir("/spiflash");
+    if (d) {
+        struct dirent *e;
+        while ((e = readdir(d)) != NULL) {
+            ESP_LOGI(TAG, "  [ROOT] %s", e->d_name);
+        }
+        closedir(d);
+    } else {
+        ESP_LOGE(TAG, "  opendir("/spiflash") FAILED! errno=%d", errno);
+    }
+    d = opendir(MUSIC_DIR);
+    if (d) {
+        struct dirent *e;
+        while ((e = readdir(d)) != NULL) {
+            ESP_LOGI(TAG, "  [MUSIC] %s", e->d_name);
+        }
+        closedir(d);
+    } else {
+        ESP_LOGE(TAG, "  opendir("%s") FAILED! errno=%d", MUSIC_DIR, errno);
+    }
+    d = opendir(IMAGE_DIR);
+    if (d) {
+        struct dirent *e;
+        while ((e = readdir(d)) != NULL) {
+            ESP_LOGI(TAG, "  [IMAGES] %s", e->d_name);
+        }
+        closedir(d);
+    } else {
+        ESP_LOGE(TAG, "  opendir("%s") FAILED! errno=%d", IMAGE_DIR, errno);
+    }
+    ESP_LOGI(TAG, "=== End file listing ===");
+    // ===== END DEBUG =====
 
     // Show STOP screen
     display_stop();
