@@ -284,15 +284,6 @@ static void button_task(void *param)
     gpio_set_pull_mode(GPIO_NUM_43, GPIO_PULLUP_ONLY);
 
     uint8_t current = 1;
-    
-    // Check if GPIO0 is held at boot for test tone
-    if (gpio_get_level(GPIO_NUM_0) == 0) {
-        vTaskDelay(pdMS_TO_TICKS(100));
-        if (gpio_get_level(GPIO_NUM_0) == 0) {
-            ESP_LOGI(TAG, "GPIO0 held - playing test tone");
-            audio_player_play_test_tone();
-        }
-    }
 
     while (1) {
         bool prev_pressed = (gpio_get_level(GPIO_NUM_0) == 0);
@@ -358,7 +349,7 @@ void app_main(void)
         }
         closedir(d);
     } else {
-        ESP_LOGE(TAG, "  opendir("/spiflash") FAILED! errno=%d", errno);
+        ESP_LOGE(TAG, "  opendir(\"/spiflash\") FAILED! errno=%d", errno);
     }
     d = opendir(MUSIC_DIR);
     if (d) {
@@ -368,7 +359,7 @@ void app_main(void)
         }
         closedir(d);
     } else {
-        ESP_LOGE(TAG, "  opendir("%s") FAILED! errno=%d", MUSIC_DIR, errno);
+        ESP_LOGE(TAG, "  opendir(\"%s\") FAILED! errno=%d", MUSIC_DIR, errno);
     }
     d = opendir(IMAGE_DIR);
     if (d) {
@@ -378,9 +369,22 @@ void app_main(void)
         }
         closedir(d);
     } else {
-        ESP_LOGE(TAG, "  opendir("%s") FAILED! errno=%d", IMAGE_DIR, errno);
+        ESP_LOGE(TAG, "  opendir(\"%s\") FAILED! errno=%d", IMAGE_DIR, errno);
     }
     ESP_LOGI(TAG, "=== End file listing ===");
+    
+    // ===== DEBUG: Try to open 1.mp3 directly =====
+    ESP_LOGI(TAG, "=== Testing fopen('/spiflash/music/1.mp3') ===");
+    FILE *test_f = fopen("/spiflash/music/1.mp3", "rb");
+    if (test_f) {
+        fseek(test_f, 0, SEEK_END);
+        long test_size = ftell(test_f);
+        fclose(test_f);
+        ESP_LOGI(TAG, "  fopen SUCCESS! File size: %ld bytes", test_size);
+    } else {
+        ESP_LOGE(TAG, "  fopen FAILED! errno=%d (%s)", errno, strerror(errno));
+    }
+    ESP_LOGI(TAG, "=== End fopen test ===");
     // ===== END DEBUG =====
 
     // Show STOP screen
