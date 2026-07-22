@@ -331,6 +331,7 @@ void app_main(void)
 
     // Initialize USB (CDC ACM + MSC) - also mounts FATFS
     usb_msc_init();
+    vTaskDelay(pdMS_TO_TICKS(100)); // Let TinyUSB settle
     // Create default directories after FS is mounted
     mkdir(MUSIC_DIR, 0777);
     mkdir(IMAGE_DIR, 0777);
