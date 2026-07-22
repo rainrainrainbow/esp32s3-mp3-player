@@ -55,14 +55,58 @@ static void es8311_init(void)
     };
     ESP_ERROR_CHECK(i2c_param_config(I2C_NUM_1, &conf));
     ESP_ERROR_CHECK(i2c_driver_install(I2C_NUM_1, I2C_MODE_MASTER, 0, 0, 0));
+
+    // Reset
     es8311_write_reg(0x00, 0x1F); vTaskDelay(pdMS_TO_TICKS(50));
-    es8311_write_reg(0x01, 0x00); vTaskDelay(pdMS_TO_TICKS(10));
-    es8311_write_reg(0x1F, 0x24); vTaskDelay(pdMS_TO_TICKS(10));
-    es8311_write_reg(0x0A, 0x00); es8311_write_reg(0x0B, 0x00);
-    es8311_write_reg(0x22, 0x00); es8311_write_reg(0x23, 0x00);
-    es8311_write_reg(0x26, 0x05); es8311_write_reg(0x27, 0x1E); es8311_write_reg(0x28, 0x00);
+    es8311_write_reg(0x00, 0x00); vTaskDelay(pdMS_TO_TICKS(10));
+    
+    // Power management: enable DAC, disable MIC/ADC
+    es8311_write_reg(0x02, 0x01); // Power up DAC, enable LDO
+    es8311_write_reg(0x03, 0x00); // Enable all power
+    es8311_write_reg(0x04, 0x00); // Normal operation
+    
+    // Clock configuration for 44100Hz with MCLK=256*fs
+    es8311_write_reg(0x01, 0x00); // MCLK selected, no PLL
+    es8311_write_reg(0x06, 0x00); // MCLK divider = 1
+    es8311_write_reg(0x07, 0x00); // No clock inversion
+    es8311_write_reg(0x08, 0x00); // Sample rate: 44100Hz (MCLK/256)
+    es8311_write_reg(0x09, 0x01); // FS ratio = 256
+    
+    // Audio interface: I2S format, 16-bit, slave
+    es8311_write_reg(0x0F, 0x00); // I2S format, 16-bit word
+    es8311_write_reg(0x10, 0x01); // LRCLK normal polarity
+    
+    // DAC power up
+    es8311_write_reg(0x0C, 0x02); // DAC power up
+    
+    // DAC volume: 0dB (mute off)
+    es8311_write_reg(0x14, 0x00); // DAC volume left (0dB)
+    es8311_write_reg(0x15, 0x00); // DAC volume right (0dB)
+    
+    // Select DAC output to speaker
+    es8311_write_reg(0x0A, 0x00); // DAC L1 to output mixer
+    es8311_write_reg(0x0B, 0x00); // DAC R1 to output mixer
+    
+    // Speaker volume
+    es8311_write_reg(0x1F, 0x24); // SPK volume (analog gain)
+    es8311_write_reg(0x20, 0x06); // SPK volume boost
+    es8311_write_reg(0x21, 0x06); // SPK volume
+    es8311_write_reg(0x22, 0x00); // SPK volume
+    es8311_write_reg(0x23, 0x00); // HP/SPK volume
+    
+    // Charge pump
+    es8311_write_reg(0x1D, 0x02); // Charge pump enable
+    es8311_write_reg(0x1E, 0x03); // Charge pump setting
+    
+    // Digital volume
+    es8311_write_reg(0x26, 0x05); // Digital volume
+    es8311_write_reg(0x27, 0x1E); // Digital volume
+    es8311_write_reg(0x28, 0x00); // Digital volume
+    
+    // Set PA pin low (speaker off until playback starts)
     gpio_set_direction(AUDIO_CODEC_PA_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(AUDIO_CODEC_PA_PIN, 0);
+    
     ESP_LOGI(TAG, "ES8311 ready");
 }
 
@@ -73,7 +117,7 @@ static void i2s_init(void)
     ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &i2s_tx_handle, NULL));
     i2s_std_config_t std_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(44100),
-        .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
         .gpio_cfg = {
             .mclk = AUDIO_I2S_GPIO_MCLK,
             .bclk = AUDIO_I2S_GPIO_BCLK,
