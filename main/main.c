@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <math.h>
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -41,6 +42,71 @@ static bool is_image_file(const char *name)
     if (!ext) return false;
     if (strcasecmp(ext, ".bmp") == 0) return true;
     return false;
+}
+
+
+#define FILE_LIST_MAX_DEPTH 6
+
+static void list_flash_tree(const char *path, int depth)
+{
+    if (depth > FILE_LIST_MAX_DEPTH) {
+        ESP_LOGW(TAG, "%*s... depth limit at %s", depth * 2, "", path);
+        return;
+    }
+
+    errno = 0;
+    DIR *dir = opendir(path);
+    if (!dir) {
+        ESP_LOGE(TAG, "opendir('%s') failed: errno=%d (%s)",
+                 path, errno, strerror(errno));
+        return;
+    }
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        char child[384];
+        int n = snprintf(child, sizeof(child), "%s/%s", path, entry->d_name);
+        if (n < 0 || n >= (int)sizeof(child)) {
+            ESP_LOGW(TAG, "Path too long under %s: %s", path, entry->d_name);
+            continue;
+        }
+        struct stat st;
+        errno = 0;
+        if (stat(child, &st) != 0) {
+            ESP_LOGE(TAG, "stat('%s') failed: errno=%d (%s)",
+                     child, errno, strerror(errno));
+            continue;
+        }
+        if (S_ISDIR(st.st_mode)) {
+            ESP_LOGI(TAG, "%*s[DIR ] %s", depth * 2, "", child);
+            list_flash_tree(child, depth + 1);
+        } else {
+            ESP_LOGI(TAG, "%*s[FILE] %s (%ld bytes)",
+                     depth * 2, "", child, (long)st.st_size);
+        }
+    }
+    closedir(dir);
+}
+
+static uint8_t scan_mp3_tracks(void)
+{
+    if (!usb_msc_is_app_mode()) return 0;
+    DIR *dir = opendir(MUSIC_DIR);
+    if (!dir) {
+        ESP_LOGE(TAG, "opendir('%s') failed: errno=%d (%s)",
+                 MUSIC_DIR, errno, strerror(errno));
+        return 0;
+    }
+    uint8_t count = 0;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        const char *ext = strrchr(entry->d_name, '.');
+        if (ext && strcasecmp(ext, ".mp3") == 0 && count < UINT8_MAX) ++count;
+    }
+    closedir(dir);
+    ESP_LOGI(TAG, "MP3 scan: %u track(s)", count);
+    return count;
 }
 
 /* 5x7 pixel font bitmap for basic characters */
@@ -200,7 +266,14 @@ static void show_track_image(uint8_t track)
 static void slideshow_task(void *param)
 {
     uint8_t prev_track = 0;
-    char image_paths[64][384];
+    char (*image_paths)[384] = heap_caps_calloc(64, sizeof(*image_paths),
+                                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!image_paths) image_paths = calloc(64, sizeof(*image_paths));
+    if (!image_paths) {
+        ESP_LOGE(TAG, "Unable to allocate slideshow path table");
+        vTaskDelete(NULL);
+        return;
+    }
     uint8_t img_count = 0;
     uint8_t img_index = 0;
 
@@ -245,70 +318,100 @@ static void slideshow_task(void *param)
     }
 }
 
-/* Button task */
+/* Button task
+ * GPIO0 short: previous track
+ * GPIO0 long (3 s): toggle FATFS owner APP <-> USB
+ * GPIO43 short: next track
+ * GPIO43 long (2 s): runtime diagnostic melody
+ */
 static void button_task(void *param)
 {
-    // Count tracks
-    DIR *dir = opendir(MUSIC_DIR);
-    uint8_t max_tracks = 0;
-    struct dirent *entry;
-    if (dir) {
-        while ((entry = readdir(dir)) != NULL) {
-            const char *ext = strrchr(entry->d_name, '.');
-            if (ext && strcasecmp(ext, ".mp3") == 0) max_tracks++;
-        }
-        closedir(dir);
-    }
-    ESP_LOGI(TAG, "Found %d MP3 tracks", max_tracks);
-    if (max_tracks == 0) {
-        // Try to create dir and re-scan (user may have added files via USB)
-        mkdir(MUSIC_DIR, 0777);
-        dir = opendir(MUSIC_DIR);
-        if (dir) {
-            while ((entry = readdir(dir)) != NULL) {
-                const char *ext = strrchr(entry->d_name, '.');
-                if (ext && strcasecmp(ext, ".mp3") == 0) max_tracks++;
-            }
-            closedir(dir);
-        }
-        ESP_LOGI(TAG, "Re-scan: %d MP3 tracks", max_tracks);
-    }
-    if (max_tracks == 0) {
-        ESP_LOGW(TAG, "No MP3 files found! Put files in music/ folder via USB");
-        max_tracks = 1; // default to 1 so user can manually name files
-    }
-
+    (void)param;
     gpio_set_direction(GPIO_NUM_0, GPIO_MODE_INPUT);
     gpio_set_pull_mode(GPIO_NUM_0, GPIO_PULLUP_ONLY);
     gpio_set_direction(GPIO_NUM_43, GPIO_MODE_INPUT);
     gpio_set_pull_mode(GPIO_NUM_43, GPIO_PULLUP_ONLY);
 
+    uint8_t max_tracks = scan_mp3_tracks();
     uint8_t current = 1;
 
     while (1) {
-        bool prev_pressed = (gpio_get_level(GPIO_NUM_0) == 0);
-        bool next_pressed = (gpio_get_level(GPIO_NUM_43) == 0);
-
-        if (prev_pressed) {
-            vTaskDelay(pdMS_TO_TICKS(50));
-            if (gpio_get_level(GPIO_NUM_0) == 0) {
-                current = (current == 1) ? max_tracks : current - 1;
-                ESP_LOGI(TAG, "Prev track %d", current);
-                audio_player_play_track(current);
-                while (gpio_get_level(GPIO_NUM_0) == 0) vTaskDelay(pdMS_TO_TICKS(10));
+        if (gpio_get_level(GPIO_NUM_0) == 0) {
+            TickType_t pressed_at = xTaskGetTickCount();
+            bool long_press = false;
+            while (gpio_get_level(GPIO_NUM_0) == 0) {
+                if ((xTaskGetTickCount() - pressed_at) >= pdMS_TO_TICKS(3000)) {
+                    long_press = true;
+                    break;
+                }
+                vTaskDelay(pdMS_TO_TICKS(20));
             }
+            while (gpio_get_level(GPIO_NUM_0) == 0) vTaskDelay(pdMS_TO_TICKS(20));
+
+            if (long_press) {
+                audio_player_stop();
+                vTaskDelay(pdMS_TO_TICKS(100));
+                if (usb_msc_is_app_mode()) {
+                    ESP_LOGW(TAG, "GPIO0 long press: handing storage to USB host");
+                    usb_msc_switch_to_usb();
+                } else {
+                    ESP_LOGI(TAG, "GPIO0 long press: returning storage to ESP32");
+                    if (usb_msc_switch_to_app()) {
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                        ESP_LOGI(TAG, "=== FLASH TREE AFTER APP REMOUNT ===");
+                        list_flash_tree(STORAGE_MOUNT_POINT, 0);
+                        max_tracks = scan_mp3_tracks();
+                        current = 1;
+                    }
+                }
+            } else if (usb_msc_is_app_mode()) {
+                max_tracks = scan_mp3_tracks();
+                if (max_tracks == 0) {
+                    ESP_LOGE(TAG, "Previous: no MP3 files visible");
+                } else {
+                    current = (current <= 1) ? max_tracks : current - 1;
+                    ESP_LOGI(TAG, "Prev track %u", current);
+                    audio_player_play_track(current);
+                }
+            } else {
+                ESP_LOGW(TAG, "Storage belongs to USB; long-press GPIO0 to return it to APP");
+            }
+            vTaskDelay(pdMS_TO_TICKS(80));
+            continue;
         }
 
-        if (next_pressed) {
-            vTaskDelay(pdMS_TO_TICKS(50));
-            if (gpio_get_level(GPIO_NUM_43) == 0) {
-                current = (current >= max_tracks) ? 1 : current + 1;
-                ESP_LOGI(TAG, "Next track %d", current);
-                audio_player_play_track(current);
-                while (gpio_get_level(GPIO_NUM_43) == 0) vTaskDelay(pdMS_TO_TICKS(10));
+        if (gpio_get_level(GPIO_NUM_43) == 0) {
+            TickType_t pressed_at = xTaskGetTickCount();
+            bool long_press = false;
+            while (gpio_get_level(GPIO_NUM_43) == 0) {
+                if ((xTaskGetTickCount() - pressed_at) >= pdMS_TO_TICKS(2000)) {
+                    long_press = true;
+                    break;
+                }
+                vTaskDelay(pdMS_TO_TICKS(20));
             }
-        }
+            while (gpio_get_level(GPIO_NUM_43) == 0) vTaskDelay(pdMS_TO_TICKS(20));
 
+            if (long_press) {
+                ESP_LOGI(TAG, "GPIO43 long press: diagnostic melody");
+                audio_player_stop();
+                vTaskDelay(pdMS_TO_TICKS(100));
+                audio_player_play_test_tone();
+            } else if (usb_msc_is_app_mode()) {
+                max_tracks = scan_mp3_tracks();
+                if (max_tracks == 0) {
+                    ESP_LOGE(TAG, "Next: no MP3 files visible");
+                } else {
+                    current = (current >= max_tracks) ? 1 : current + 1;
+                    ESP_LOGI(TAG, "Next track %u", current);
+                    audio_player_play_track(current);
+                }
+            } else {
+                ESP_LOGW(TAG, "Storage belongs to USB; long-press GPIO0 to return it to APP");
+            }
+            vTaskDelay(pdMS_TO_TICKS(80));
+            continue;
+        }
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
@@ -339,53 +442,38 @@ void app_main(void)
     mkdir(MUSIC_DIR, 0777);
     mkdir(IMAGE_DIR, 0777);
 
-    // ===== DEBUG: List all files in /spiflash =====
-    ESP_LOGI(TAG, "=== Listing /spiflash/ ===");
-    DIR *d = opendir("/spiflash");
-    if (d) {
-        struct dirent *e;
-        while ((e = readdir(d)) != NULL) {
-            ESP_LOGI(TAG, "  [ROOT] %s", e->d_name);
-        }
-        closedir(d);
+    ESP_LOGI(TAG, "=== RECURSIVE FLASH TREE: %s ===", STORAGE_MOUNT_POINT);
+    list_flash_tree(STORAGE_MOUNT_POINT, 0);
+    ESP_LOGI(TAG, "=== END FLASH TREE ===");
+
+    const char *test_path = MUSIC_DIR "/1.mp3";
+    struct stat test_st;
+    errno = 0;
+    if (stat(test_path, &test_st) == 0) {
+        ESP_LOGI(TAG, "stat test OK: %s, %ld bytes", test_path, (long)test_st.st_size);
     } else {
-        ESP_LOGE(TAG, "  opendir(\"/spiflash\") FAILED! errno=%d", errno);
+        ESP_LOGE(TAG, "stat test FAIL: %s, errno=%d (%s)",
+                 test_path, errno, strerror(errno));
     }
-    d = opendir(MUSIC_DIR);
-    if (d) {
-        struct dirent *e;
-        while ((e = readdir(d)) != NULL) {
-            ESP_LOGI(TAG, "  [MUSIC] %s", e->d_name);
-        }
-        closedir(d);
-    } else {
-        ESP_LOGE(TAG, "  opendir(\"%s\") FAILED! errno=%d", MUSIC_DIR, errno);
-    }
-    d = opendir(IMAGE_DIR);
-    if (d) {
-        struct dirent *e;
-        while ((e = readdir(d)) != NULL) {
-            ESP_LOGI(TAG, "  [IMAGES] %s", e->d_name);
-        }
-        closedir(d);
-    } else {
-        ESP_LOGE(TAG, "  opendir(\"%s\") FAILED! errno=%d", IMAGE_DIR, errno);
-    }
-    ESP_LOGI(TAG, "=== End file listing ===");
-    
-    // ===== DEBUG: Try to open 1.mp3 directly =====
-    ESP_LOGI(TAG, "=== Testing fopen('/spiflash/music/1.mp3') ===");
-    FILE *test_f = fopen("/spiflash/music/1.mp3", "rb");
+    errno = 0;
+    FILE *test_f = fopen(test_path, "rb");
     if (test_f) {
-        fseek(test_f, 0, SEEK_END);
-        long test_size = ftell(test_f);
+        unsigned char head[16] = {0};
+        size_t got = fread(head, 1, sizeof(head), test_f);
         fclose(test_f);
-        ESP_LOGI(TAG, "  fopen SUCCESS! File size: %ld bytes", test_size);
+        ESP_LOGI(TAG,
+                 "fopen test OK: read=%u head=%02X %02X %02X %02X %02X %02X %02X %02X",
+                 (unsigned)got, head[0], head[1], head[2], head[3],
+                 head[4], head[5], head[6], head[7]);
     } else {
-        ESP_LOGE(TAG, "  fopen FAILED! errno=%d (%s)", errno, strerror(errno));
+        ESP_LOGE(TAG, "fopen test FAIL: %s, errno=%d (%s)",
+                 test_path, errno, strerror(errno));
     }
-    ESP_LOGI(TAG, "=== End fopen test ===");
-    // ===== END DEBUG =====
+
+    /* Runtime test: no strapping pin needs to be held at reset. */
+    ESP_LOGI(TAG, "Starting automatic audio diagnostic");
+    audio_player_play_test_tone();
+
 
     // Show STOP screen
     display_stop();
@@ -397,5 +485,6 @@ void app_main(void)
     xTaskCreatePinnedToCore(button_task, "buttons", 3072, NULL, 5, NULL, 1);
 
     ESP_LOGI(TAG, "System ready");
-    ESP_LOGI(TAG, "GPIO0=Prev, GPIO43=Next - press button to play");
+    ESP_LOGI(TAG, "GPIO0 short=Prev, long 3s=APP/USB storage owner");
+    ESP_LOGI(TAG, "GPIO43 short=Next, long 2s=diagnostic melody");
 }
