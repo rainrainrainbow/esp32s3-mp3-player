@@ -1,17 +1,15 @@
 /*
  * usb_msc.c - USB Composite Device (CDC ACM + MSC U盘)
  * CDC ACM for serial output, MSC exposes SPI Flash FATFS as USB drive
- * Default: mount to APP (ESP32 reads files), long-press GPIO0 to switch to USB mode
+ * Default: APP mode (ESP32 reads files via VFS at /spiflash)
+ * When USB connected: PC sees U disk + Serial port
  */
 
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
-#include <dirent.h>
 #include "esp_log.h"
-#include "esp_check.h"
 #include "esp_vfs_fat.h"
-#include "esp_partition.h"
 #include "wear_levelling.h"
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
@@ -24,7 +22,7 @@ static const char *TAG = "USB_MSC";
 
 tinyusb_msc_storage_handle_t storage_hdl = NULL;
 
-/* Redirect esp_log to CDC ACM so serial monitor shows output */
+/* Redirect esp_log to CDC ACM */
 static int cdc_log_vprintf(const char *fmt, va_list args)
 {
     char buf[512];
@@ -40,22 +38,26 @@ void usb_msc_init(void)
 {
     ESP_LOGI(TAG, "Initializing USB Composite (CDC ACM + MSC)");
 
-    const esp_partition_t *data_partition = esp_partition_find_first(
-        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_FAT, NULL);
-    if (data_partition == NULL) {
-        ESP_LOGE(TAG, "Failed to find FATFS partition");
-        return;
-    }
-    ESP_LOGI(TAG, "Found partition: %s, size: %ld bytes",
-             data_partition->label, (long)data_partition->size);
-
-    esp_err_t ret = wl_mount(data_partition, &wl_handle);
+    // Step 1: Mount FATFS with wear levelling on storage partition
+    // This registers VFS at /spiflash so fopen() works
+    const esp_vfs_fat_mount_config_t mount_config = {
+        .format_if_mount_failed = true,
+        .max_files = 10,
+        .allocation_unit_size = CONFIG_WL_SECTOR_SIZE * 8,
+    };
+    wl_handle_t wl_handle;
+    esp_err_t ret = esp_vfs_fat_spiflash_mount_rw_wl(
+        "/spiflash",
+        STORAGE_PARTITION_LABEL,
+        &mount_config,
+        &wl_handle);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to mount wear levelling: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to mount FATFS: %s", esp_err_to_name(ret));
         return;
     }
+    ESP_LOGI(TAG, "FATFS mounted at /spiflash");
 
-    // Default: mount to APP so ESP32 can read files
+    // Step 2: Register storage for TinyUSB MSC (so PC sees U disk)
     tinyusb_msc_storage_config_t storage_cfg = {
         .mount_point = TINYUSB_MSC_STORAGE_MOUNT_APP,
         .medium.wl_handle = wl_handle,
@@ -72,7 +74,7 @@ void usb_msc_init(void)
         return;
     }
 
-    // Install TinyUSB driver
+    // Step 3: Install TinyUSB driver
     const tinyusb_config_t tusb_cfg = TINYUSB_DEFAULT_CONFIG();
     ret = tinyusb_driver_install(&tusb_cfg);
     if (ret != ESP_OK) {
@@ -80,7 +82,7 @@ void usb_msc_init(void)
         return;
     }
 
-    // Init CDC ACM (virtual serial port)
+    // Step 4: Init CDC ACM (virtual serial port)
     tinyusb_config_cdcacm_t acm_cfg = {
         .cdc_port = TINYUSB_CDC_ACM_0,
         .callback_rx = NULL,
@@ -94,12 +96,10 @@ void usb_msc_init(void)
         return;
     }
 
-    // Redirect esp_log to CDC ACM
+    // Step 5: Redirect esp_log to CDC ACM
     esp_log_set_vprintf(cdc_log_vprintf);
 
-    ESP_LOGI(TAG, "USB Composite ready");
-    ESP_LOGI(TAG, "Storage mounted to APP - ESP32 can read/write");
-    ESP_LOGI(TAG, "Long-press GPIO0 > 3s to expose as USB drive");
+    ESP_LOGI(TAG, "USB Composite ready - FATFS at /spiflash, CDC+MSC active");
 }
 
 void usb_msc_switch_to_usb(void)
