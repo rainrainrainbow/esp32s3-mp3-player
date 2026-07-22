@@ -18,9 +18,6 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <math.h>
-#include <errno.h>
-#include <sys/stat.h>
-#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -293,7 +290,7 @@ static void button_task(void *param)
         vTaskDelay(pdMS_TO_TICKS(100));
         if (gpio_get_level(GPIO_NUM_0) == 0) {
             ESP_LOGI(TAG, "GPIO0 held - playing test tone");
-            play_test_tone();
+            audio_player_play_test_tone();
         }
     }
 
