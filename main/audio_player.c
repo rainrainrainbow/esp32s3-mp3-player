@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -182,6 +183,29 @@ static void audio_playback_task(void *param)
     free(mp3_buf); gpio_set_level(AUDIO_CODEC_PA_PIN, 0);
     player_state = PLAYER_STATE_STOPPED; audio_task_running = false; audio_task_handle = NULL;
     vTaskDelete(NULL);
+}
+
+void audio_player_play_test_tone(void)
+{
+    ESP_LOGI(TAG, "Playing 1kHz test tone for 2 seconds");
+    #define TONE_FREQ 1000
+    #define TONE_SAMPLES 44100
+    #define TONE_SECONDS 2
+    int total_samples = TONE_SAMPLES * TONE_SECONDS;
+    int16_t *tone_buf = (int16_t*)heap_caps_malloc(total_samples * sizeof(int16_t), MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
+    if (!tone_buf) {
+        ESP_LOGE(TAG, "Tone OOM");
+        return;
+    }
+    for (int i = 0; i < total_samples; i++) {
+        tone_buf[i] = (int16_t)(16000 * sin(2.0 * M_PI * TONE_FREQ * i / 44100.0));
+    }
+    gpio_set_level(AUDIO_CODEC_PA_PIN, 1);
+    size_t written = 0;
+    i2s_channel_write(i2s_tx_handle, tone_buf, total_samples * sizeof(int16_t), &written, portMAX_DELAY);
+    gpio_set_level(AUDIO_CODEC_PA_PIN, 0);
+    free(tone_buf);
+    ESP_LOGI(TAG, "Test tone finished");
 }
 
 void audio_player_init(void) { ESP_LOGI(TAG, "Audio player init"); i2s_init(); es8311_init(); ESP_LOGI(TAG, "Audio player ready"); }
