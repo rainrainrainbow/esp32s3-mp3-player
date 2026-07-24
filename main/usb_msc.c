@@ -21,6 +21,7 @@
 static const char *TAG = "USB_MSC";
 static tinyusb_msc_storage_handle_t storage_hdl = NULL;
 static bool storage_is_app = false;
+static wl_handle_t s_wl_handle = WL_INVALID_HANDLE;
 
 static const char *mount_name(tinyusb_msc_mount_point_t point)
 {
@@ -73,8 +74,7 @@ void usb_msc_init(void)
         return;
     }
 
-    wl_handle_t wl_handle = WL_INVALID_HANDLE;
-    esp_err_t ret = wl_mount(part, &wl_handle);
+    esp_err_t ret = wl_mount(part, &s_wl_handle);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "wl_mount failed: %s", esp_err_to_name(ret));
         return;
@@ -93,7 +93,7 @@ void usb_msc_init(void)
     }
 
     const tinyusb_msc_storage_config_t storage_cfg = {
-        .medium.wl_handle = wl_handle,
+        .medium.wl_handle = s_wl_handle,
         .mount_point = TINYUSB_MSC_STORAGE_MOUNT_APP,
         .fat_fs = {
             .base_path = STORAGE_MOUNT_POINT,
@@ -155,14 +155,27 @@ bool usb_msc_switch_to_usb(void)
 bool usb_msc_switch_to_app(void)
 {
     if (!storage_hdl) return false;
+
+    /*
+     * CRITICAL: After USB mode, the FATFS metadata (FAT table, directory entries)
+     * may have been modified by the USB host. We must force a full remount to
+     * re-read the FAT from flash. Without this, stat() and fopen() see stale data.
+     */
+    ESP_LOGI(TAG, "Switching to APP mode with forced FATFS remount...");
+
+    /* Step 1: Switch mount point back to APP (this should re-mount FATFS) */
     esp_err_t ret = tinyusb_msc_set_storage_mount_point(
         storage_hdl, TINYUSB_MSC_STORAGE_MOUNT_APP);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Switch to APP failed: %s", esp_err_to_name(ret));
         return false;
     }
+
+    /* Step 2: Force wear-levelling to flush/re-read */
+    wl_flush(s_wl_handle);
+
     storage_is_app = true;
-    ESP_LOGI(TAG, "Storage owner=APP; %s available", STORAGE_MOUNT_POINT);
+    ESP_LOGI(TAG, "Storage owner=APP; %s available (FATFS remounted)", STORAGE_MOUNT_POINT);
     return true;
 }
 
