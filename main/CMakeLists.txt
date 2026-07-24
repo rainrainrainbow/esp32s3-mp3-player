@@ -11,6 +11,7 @@ set(COMPONENT_ADD_INCLUDEDIRS ".")
 set(COMPONENT_REQUIRES
     driver
     esp_driver_i2s
+    esp_driver_ledc
     fatfs
     spi_flash
     wear_levelling
