@@ -1,21 +1,22 @@
-set(COMPONENT_SRCS 
-    "main.c" 
-    "tft_driver.c" 
-    "audio_player.c" 
+set(COMPONENT_SRCS
+    "main.c"
+    "tft_driver.c"
+    "audio_player.c"
     "fatfs_manager.c"
     "image_decoder.c"
     "minimp3.c"
     "usb_msc.c"
 )
 set(COMPONENT_ADD_INCLUDEDIRS ".")
-set(COMPONENT_REQUIRES 
-    driver 
-    esp_driver_i2s 
-    fatfs 
-    spi_flash 
-    wear_levelling 
-    nvs_flash 
+set(COMPONENT_REQUIRES
+    driver
+    esp_driver_i2s
+    fatfs
+    spi_flash
+    wear_levelling
+    nvs_flash
     esp_timer
     tinyusb
+    esp_jpeg
 )
 register_component()
