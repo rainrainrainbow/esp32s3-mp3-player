@@ -28,7 +28,7 @@ static const char *TAG = "AUDIO";
 #define ES8311_I2C_ADDR      0x18
 #define AUDIO_DEFAULT_RATE   44100
 #define TEST_SECONDS         3
-#define TEST_AMPLITUDE       12000
+#define TEST_AMPLITUDE       6000  /* Reduced from 12000 for 50% volume */
 
 static player_state_t player_state = PLAYER_STATE_STOPPED;
 static uint8_t current_track = 0;
@@ -139,9 +139,9 @@ static bool es8311_init(void)
     if (!codec_write(0x1C, 0x6A)) return false;
     if (!codec_write(0x37, 0x08)) return false; /* bypass DAC EQ */
 
-    /* Unmute and set a conservative diagnostic volume (~75%). */
+    /* Unmute and set volume to 50% (0x60 = -18dB, much quieter than 0xBF). */
     if (!codec_write(0x31, 0x00)) return false;
-    if (!codec_write(0x32, 0xBF)) return false;
+    if (!codec_write(0x32, 0x60)) return false;  /* 50% volume */
 
     ESP_LOGI(TAG, "ES8311 initialized with official 16-bit I2S sequence");
     es8311_dump_key_registers();
@@ -264,6 +264,9 @@ static void audio_playback_task(void *param)
     char path[96];
     snprintf(path, sizeof(path), "%s/%u.mp3", MUSIC_DIR, track);
 
+    ESP_LOGI(TAG, "=== AUDIO PLAYBACK TASK START ===");
+    ESP_LOGI(TAG, "Opening: %s", path);
+
     struct stat st;
     errno = 0;
     if (stat(path, &st) != 0) {
@@ -294,6 +297,8 @@ static void audio_playback_task(void *param)
     }
     long file_size = ftell(f);
     fseek(f, 0, SEEK_SET);
+    ESP_LOGI(TAG, "ftell result: file_size=%ld", file_size);
+
     if (file_size <= 0) {
         ESP_LOGE(TAG, "Invalid MP3 size: %ld", file_size);
         fclose(f);
@@ -320,15 +325,21 @@ static void audio_playback_task(void *param)
         return;
     }
 
+    ESP_LOGI(TAG, "Reading MP3 file...");
     size_t bytes_read = fread(mp3, 1, (size_t)file_size, f);
     fclose(f);
+    ESP_LOGI(TAG, "fread result: bytes_read=%u (expected=%ld)", (unsigned)bytes_read, file_size);
+
     if (bytes_read != (size_t)file_size) {
         ESP_LOGE(TAG, "Short MP3 read: expected=%ld actual=%u errno=%d (%s)",
                  file_size, (unsigned)bytes_read, errno, strerror(errno));
         playback_cleanup(mp3, pcm, stereo);
         return;
     }
-    ESP_LOGI(TAG, "MP3 loaded: %u bytes", (unsigned)bytes_read);
+
+    ESP_LOGI(TAG, "MP3 loaded: %u bytes, first 8 bytes: %02X %02X %02X %02X %02X %02X %02X %02X",
+             (unsigned)bytes_read, mp3[0], mp3[1], mp3[2], mp3[3],
+             mp3[4], mp3[5], mp3[6], mp3[7]);
 
     mp3dec_t dec;
     mp3dec_init(&dec);
