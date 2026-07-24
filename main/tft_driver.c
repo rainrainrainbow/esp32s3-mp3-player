@@ -10,6 +10,7 @@
 #include "freertos/task.h"
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
+#include "driver/ledc.h"
 #include "esp_log.h"
 #include "config.h"
 #include "tft_driver.h"
@@ -39,6 +40,12 @@ static uint16_t *fb = NULL; // framebuffer for display
 #define MADCTL_ML  0x10
 #define MADCTL_BGR 0x08
 #define MADCTL_MH  0x04
+
+// Backlight PWM config
+#define LEDC_TIMER      LEDC_TIMER_1
+#define LEDC_CHANNEL    LEDC_CHANNEL_1
+#define LEDC_DUTY_RES   LEDC_TIMER_10_BIT
+#define LEDC_FREQ       5000
 
 static void tft_send_cmd(uint8_t cmd)
 {
@@ -105,9 +112,26 @@ void tft_init(void)
 {
     ESP_LOGI(TAG, "Initializing TFT display");
 
-    // Configure backlight
-    gpio_set_direction(DISPLAY_BACKLIGHT_PIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT ? 0 : 1);
+    // Configure backlight with PWM
+    ledc_timer_config_t ledc_timer = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .timer_num = LEDC_TIMER,
+        .duty_resolution = LEDC_DUTY_RES,
+        .freq_hz = LEDC_FREQ,
+        .clk_cfg = LEDC_AUTO_CLK,
+    };
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+
+    ledc_channel_config_t ledc_channel = {
+        .speed_mode = LEDC_LOW_SPEED_MODE,
+        .channel = LEDC_CHANNEL,
+        .timer_sel = LEDC_TIMER,
+        .intr_type = LEDC_INTR_DISABLE,
+        .gpio_num = DISPLAY_BACKLIGHT_PIN,
+        .duty = 768, // 75% brightness (768/1023)
+        .hpoint = 0,
+    };
+    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
 
     // Configure control pins
     gpio_set_direction(DISPLAY_DC_GPIO, GPIO_MODE_OUTPUT);
@@ -137,7 +161,7 @@ void tft_init(void)
 
     spi_device_interface_config_t dev_cfg = {
         .mode = DISPLAY_SPI_MODE,
-        .clock_speed_hz = 40 * 1000 * 1000, // 80MHz
+        .clock_speed_hz = 40 * 1000 * 1000,
         .spics_io_num = DISPLAY_CS_GPIO,
         .queue_size = 1,
     };
@@ -176,16 +200,30 @@ void tft_init(void)
 
 void tft_set_backlight(uint8_t brightness)
 {
-    // Simple PWM or on/off control
-    bool level = DISPLAY_BACKLIGHT_OUTPUT_INVERT ? (brightness == 0) : (brightness > 0);
-    gpio_set_level(DISPLAY_BACKLIGHT_PIN, level);
+    // Simple on/off for backward compatibility
+    if (brightness == 0) {
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, 0);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL);
+    } else {
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, 768);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL);
+    }
+}
+
+void tft_set_brightness(uint8_t percent)
+{
+    if (percent > 100) percent = 100;
+    // 10-bit resolution: 0-1023
+    uint32_t duty = (percent * 1023) / 100;
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, duty);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL);
+    ESP_LOGI(TAG, "Brightness set to %d%% (duty=%lu)", percent, (unsigned long)duty);
 }
 
 void tft_fill_screen(uint16_t color)
 {
     tft_set_addr_window(0, 0, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 1);
     size_t pixels = DISPLAY_WIDTH * DISPLAY_HEIGHT;
-    // Use a small buffer for filling
     uint16_t fill_buf[256];
     for (int i = 0; i < 256; i++) fill_buf[i] = color;
     for (size_t i = 0; i < pixels; i += 256) {
@@ -203,25 +241,19 @@ void tft_draw_pixel(uint16_t x, uint16_t y, uint16_t color)
 
 void tft_show_image_file(const char *filepath)
 {
-    // Direct write, no framebuffer needed
+    decoded_image_t img = {0};
 
-    uint16_t width, height;
-    uint16_t *pixels = NULL;
-
-    if (!decode_bmp_file(filepath, &width, &height, &pixels)) {
+    // Decode and scale to display size
+    if (!decode_image_file(filepath, DISPLAY_WIDTH, DISPLAY_HEIGHT, &img)) {
         ESP_LOGE(TAG, "Failed to decode image: %s", filepath);
         return;
     }
 
-    // Center or fit image on display
-    uint16_t x = 0, y = 0;
-    if (width > DISPLAY_WIDTH) width = DISPLAY_WIDTH;
-    if (height > DISPLAY_HEIGHT) height = DISPLAY_HEIGHT;
-    if (width < DISPLAY_WIDTH) x = (DISPLAY_WIDTH - width) / 2;
-    if (height < DISPLAY_HEIGHT) y = (DISPLAY_HEIGHT - height) / 2;
+    ESP_LOGI(TAG, "Displaying %s (%dx%d)", filepath, img.width, img.height);
 
-    tft_set_addr_window(x, y, x + width - 1, y + height - 1);
-    tft_send_data16(pixels, width * height);
+    // Send to display
+    tft_set_addr_window(0, 0, img.width - 1, img.height - 1);
+    tft_send_data16(img.pixels, (size_t)img.width * img.height);
 
-    free_decoded_image(pixels);
+    free_decoded_image(&img);
 }
