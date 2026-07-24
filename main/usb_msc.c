@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "esp_partition.h"
 #include "wear_levelling.h"
+#include "esp_vfs_fat.h"
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
 #include "tinyusb_msc.h"
@@ -22,6 +23,7 @@ static const char *TAG = "USB_MSC";
 static tinyusb_msc_storage_handle_t storage_hdl = NULL;
 static bool storage_is_app = false;
 static wl_handle_t s_wl_handle = WL_INVALID_HANDLE;
+static const esp_partition_t *s_part = NULL;
 
 static const char *mount_name(tinyusb_msc_mount_point_t point)
 {
@@ -66,15 +68,15 @@ void usb_msc_init(void)
 {
     ESP_LOGI(TAG, "Initializing USB CDC + manually-owned MSC");
 
-    const esp_partition_t *part = esp_partition_find_first(
+    s_part = esp_partition_find_first(
         ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_FAT,
         STORAGE_PARTITION_LABEL);
-    if (!part) {
+    if (!s_part) {
         ESP_LOGE(TAG, "FAT partition '%s' not found", STORAGE_PARTITION_LABEL);
         return;
     }
 
-    esp_err_t ret = wl_mount(part, &s_wl_handle);
+    esp_err_t ret = wl_mount(s_part, &s_wl_handle);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "wl_mount failed: %s", esp_err_to_name(ret));
         return;
@@ -159,20 +161,29 @@ bool usb_msc_switch_to_app(void)
     /*
      * CRITICAL: After USB mode, the FATFS metadata (FAT table, directory entries)
      * may have been modified by the USB host. We must force a full remount to
-     * re-read the FAT from flash. Without this, stat() and fopen() see stale data.
+     * re-read the FAT from flash.
+     *
+     * Workaround: Unmount VFS first, then switch mount point (which re-mounts).
      */
     ESP_LOGI(TAG, "Switching to APP mode with forced FATFS remount...");
 
-    /* Step 1: Switch mount point back to APP (this should re-mount FATFS) */
-    esp_err_t ret = tinyusb_msc_set_storage_mount_point(
+    /* Step 1: Unmount the VFS to clear any stale cache */
+    esp_err_t ret = esp_vfs_fat_spiflash_unmount_rw_wl(STORAGE_MOUNT_POINT, s_wl_handle);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "VFS unmounted successfully");
+    } else if (ret == ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "VFS was not mounted (expected after USB mode)");
+    } else {
+        ESP_LOGE(TAG, "VFS unmount failed: %s (continuing anyway)", esp_err_to_name(ret));
+    }
+
+    /* Step 2: Switch mount point back to APP (this should re-mount FATFS) */
+    ret = tinyusb_msc_set_storage_mount_point(
         storage_hdl, TINYUSB_MSC_STORAGE_MOUNT_APP);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Switch to APP failed: %s", esp_err_to_name(ret));
         return false;
     }
-
-    /* Step 2: Force wear-levelling to flush/re-read */
-    wl_flush(s_wl_handle);
 
     storage_is_app = true;
     ESP_LOGI(TAG, "Storage owner=APP; %s available (FATFS remounted)", STORAGE_MOUNT_POINT);
