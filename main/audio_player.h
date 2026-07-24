@@ -18,5 +18,6 @@ void audio_player_resume(void);
 player_state_t audio_player_get_state(void);
 uint8_t audio_player_get_current_track(void);
 void audio_player_play_test_tone(void);
+void audio_player_set_volume(uint8_t volume); // 0-100
 
 #endif // AUDIO_PLAYER_H
