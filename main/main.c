@@ -1,14 +1,13 @@
 /*
  * main.c - ESP32-S3 MP3 Player (minimal-player branch)
  *
- * Minimal playback: one feature at a time
  * Hardware: ESP32-S3 N16R8, OPI PSRAM, ES8311, 240x320 TFT
  *
  * Features:
  * - MP3 playback from SPI flash FATFS via ES8311
- * - TFT image display (BMP slideshow, synced with track)
+ * - TFT image display (BMP/JPG slideshow, synced with track)
  * - GPIO0 = Prev track, GPIO43 = Next track
- * - Display "STOP" on screen when idle
+ * - Settings menu with volume/brightness control
  */
 
 #include <stdio.h>
@@ -24,6 +23,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
+#include "nvs.h"
 #include "config.h"
 #include "tft_driver.h"
 #include "audio_player.h"
@@ -33,80 +33,68 @@
 
 static const char *TAG = "MAIN";
 
-static uint8_t current_track = 0;
+// Settings stored in NVS
+static uint8_t g_volume = 50;      // 0-100
+static uint8_t g_brightness = 75;  // 0-100
 
-/* Check if filename has an image extension */
+// Settings menu state
+typedef enum {
+    MENU_NONE,
+    MENU_MAIN,
+    MENU_VOLUME,
+    MENU_BRIGHTNESS
+} menu_state_t;
+
+static menu_state_t g_menu_state = MENU_NONE;
+
+/* Check if filename has an image extension (BMP or JPG) */
 static bool is_image_file(const char *name)
 {
     const char *ext = strrchr(name, '.');
     if (!ext) return false;
     if (strcasecmp(ext, ".bmp") == 0) return true;
+    if (strcasecmp(ext, ".jpg") == 0) return true;
+    if (strcasecmp(ext, ".jpeg") == 0) return true;
     return false;
 }
 
-
-#define FILE_LIST_MAX_DEPTH 6
-
-static void list_flash_tree(const char *path, int depth)
+/* Load settings from NVS */
+static void load_settings(void)
 {
-    if (depth > FILE_LIST_MAX_DEPTH) {
-        ESP_LOGW(TAG, "%*s... depth limit at %s", depth * 2, "", path);
-        return;
+    nvs_handle_t nvs;
+    if (nvs_open("settings", NVS_READONLY, &nvs) == ESP_OK) {
+        nvs_get_u8(nvs, "volume", &g_volume);
+        nvs_get_u8(nvs, "brightness", &g_brightness);
+        nvs_close(nvs);
+        ESP_LOGI(TAG, "Settings loaded: volume=%d, brightness=%d", g_volume, g_brightness);
+    } else {
+        ESP_LOGI(TAG, "No saved settings, using defaults");
     }
-
-    errno = 0;
-    DIR *dir = opendir(path);
-    if (!dir) {
-        ESP_LOGE(TAG, "opendir('%s') failed: errno=%d (%s)",
-                 path, errno, strerror(errno));
-        return;
-    }
-
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-        char child[384];
-        int n = snprintf(child, sizeof(child), "%s/%s", path, entry->d_name);
-        if (n < 0 || n >= (int)sizeof(child)) {
-            ESP_LOGW(TAG, "Path too long under %s: %s", path, entry->d_name);
-            continue;
-        }
-        struct stat st;
-        errno = 0;
-        if (stat(child, &st) != 0) {
-            ESP_LOGE(TAG, "stat('%s') failed: errno=%d (%s)",
-                     child, errno, strerror(errno));
-            continue;
-        }
-        if (S_ISDIR(st.st_mode)) {
-            ESP_LOGI(TAG, "%*s[DIR ] %s", depth * 2, "", child);
-            list_flash_tree(child, depth + 1);
-        } else {
-            ESP_LOGI(TAG, "%*s[FILE] %s (%ld bytes)",
-                     depth * 2, "", child, (long)st.st_size);
-        }
-    }
-    closedir(dir);
 }
 
-static uint8_t scan_mp3_tracks(void)
+/* Save settings to NVS */
+static void save_settings(void)
 {
-    if (!usb_msc_is_app_mode()) return 0;
-    DIR *dir = opendir(MUSIC_DIR);
-    if (!dir) {
-        ESP_LOGE(TAG, "opendir('%s') failed: errno=%d (%s)",
-                 MUSIC_DIR, errno, strerror(errno));
-        return 0;
+    nvs_handle_t nvs;
+    if (nvs_open("settings", NVS_READWRITE, &nvs) == ESP_OK) {
+        nvs_set_u8(nvs, "volume", g_volume);
+        nvs_set_u8(nvs, "brightness", g_brightness);
+        nvs_commit(nvs);
+        nvs_close(nvs);
+        ESP_LOGI(TAG, "Settings saved: volume=%d, brightness=%d", g_volume, g_brightness);
     }
-    uint8_t count = 0;
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        const char *ext = strrchr(entry->d_name, '.');
-        if (ext && strcasecmp(ext, ".mp3") == 0 && count < UINT8_MAX) ++count;
-    }
-    closedir(dir);
-    ESP_LOGI(TAG, "MP3 scan: %u track(s)", count);
-    return count;
+}
+
+/* Apply volume setting to audio */
+static void apply_volume(void)
+{
+    audio_player_set_volume(g_volume);
+}
+
+/* Apply brightness setting to display */
+static void apply_brightness(void)
+{
+    tft_set_brightness(g_brightness);
 }
 
 /* 5x7 pixel font bitmap for basic characters */
@@ -213,7 +201,6 @@ static void draw_char(uint16_t x, uint16_t y, char c, uint16_t color)
         uint8_t line = font5x7[idx][col];
         for (int row = 0; row < 7; row++) {
             if (line & (1 << row)) {
-                // Draw a 2x2 pixel block for visibility
                 tft_draw_pixel(x + col*2, y + row*2, color);
                 tft_draw_pixel(x + col*2 + 1, y + row*2, color);
                 tft_draw_pixel(x + col*2, y + row*2 + 1, color);
@@ -228,8 +215,29 @@ static void draw_string(uint16_t x, uint16_t y, const char *str, uint16_t color)
 {
     while (*str) {
         draw_char(x, y, *str, color);
-        x += 12; // 5px char + 1px gap, doubled = 12
+        x += 12;
         str++;
+    }
+}
+
+/* Draw a progress bar */
+static void draw_progress_bar(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t percent, uint16_t color)
+{
+    // Draw border
+    for (uint16_t i = 0; i < w; i++) {
+        tft_draw_pixel(x + i, y, color);
+        tft_draw_pixel(x + i, y + h - 1, color);
+    }
+    for (uint16_t i = 0; i < h; i++) {
+        tft_draw_pixel(x, y + i, color);
+        tft_draw_pixel(x + w - 1, y + i, color);
+    }
+    // Draw fill
+    uint16_t fill_w = (w - 2) * percent / 100;
+    for (uint16_t i = 0; i < fill_w; i++) {
+        for (uint16_t j = 1; j < h - 1; j++) {
+            tft_draw_pixel(x + 1 + i, y + j, color);
+        }
     }
 }
 
@@ -237,29 +245,113 @@ static void draw_string(uint16_t x, uint16_t y, const char *str, uint16_t color)
 static void display_stop(void)
 {
     tft_fill_screen(0x0000);
-    draw_string(72, 140, "STOP", 0xF800); // Red STOP at center
+    draw_string(72, 140, "STOP", 0xF800);
 }
 
-/* Show first image from images/<track>/ folder */
-static void show_track_image(uint8_t track)
+/* Display settings menu */
+static void display_settings_menu(void)
 {
-    char track_dir[64];
-    snprintf(track_dir, sizeof(track_dir), "%s/%d", IMAGE_DIR, track);
+    tft_fill_screen(0x0000);
     
-    DIR *dir = opendir(track_dir);
-    if (!dir) return;
-    
+    switch (g_menu_state) {
+        case MENU_MAIN:
+            draw_string(60, 20, "SETTINGS", 0xFFFF);
+            draw_string(20, 60, "1. Volume", 0x07FF);
+            draw_string(20, 100, "2. Brightness", 0x07FF);
+            draw_string(20, 160, "Press GPIO0 to exit", 0xF800);
+            break;
+            
+        case MENU_VOLUME:
+            draw_string(60, 20, "VOLUME", 0xFFFF);
+            draw_string(20, 60, "GPIO43: +10", 0x07FF);
+            draw_string(20, 100, "GPIO0: -10", 0x07FF);
+            draw_string(20, 160, "Value:", 0xFFFF);
+            char vol_str[8];
+            snprintf(vol_str, sizeof(vol_str), "%d%%", g_volume);
+            draw_string(100, 160, vol_str, 0x07FF);
+            draw_progress_bar(20, 200, 200, 20, g_volume, 0x07FF);
+            draw_string(20, 260, "Long GPIO0: Back", 0xF800);
+            break;
+            
+        case MENU_BRIGHTNESS:
+            draw_string(40, 20, "BRIGHTNESS", 0xFFFF);
+            draw_string(20, 60, "GPIO43: +10", 0x07FF);
+            draw_string(20, 100, "GPIO0: -10", 0x07FF);
+            draw_string(20, 160, "Value:", 0xFFFF);
+            char bri_str[8];
+            snprintf(bri_str, sizeof(bri_str), "%d%%", g_brightness);
+            draw_string(100, 160, bri_str, 0x07FF);
+            draw_progress_bar(20, 200, 200, 20, g_brightness, 0xFFFF);
+            draw_string(20, 260, "Long GPIO0: Back", 0xF800);
+            break;
+            
+        default:
+            break;
+    }
+}
+
+#define FILE_LIST_MAX_DEPTH 6
+
+static void list_flash_tree(const char *path, int depth)
+{
+    if (depth > FILE_LIST_MAX_DEPTH) {
+        ESP_LOGW(TAG, "%*s... depth limit at %s", depth * 2, "", path);
+        return;
+    }
+
+    errno = 0;
+    DIR *dir = opendir(path);
+    if (!dir) {
+        ESP_LOGE(TAG, "opendir('%s') failed: errno=%d (%s)",
+                 path, errno, strerror(errno));
+        return;
+    }
+
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
-        if (is_image_file(entry->d_name)) {
-            char img_path[384];
-            snprintf(img_path, sizeof(img_path), "%s/%s", track_dir, entry->d_name);
-            closedir(dir);
-            tft_show_image_file(img_path);
-            return;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        char child[384];
+        int n = snprintf(child, sizeof(child), "%s/%s", path, entry->d_name);
+        if (n < 0 || n >= (int)sizeof(child)) {
+            ESP_LOGW(TAG, "Path too long under %s: %s", path, entry->d_name);
+            continue;
+        }
+        struct stat st;
+        errno = 0;
+        if (stat(child, &st) != 0) {
+            ESP_LOGE(TAG, "stat('%s') failed: errno=%d (%s)",
+                     child, errno, strerror(errno));
+            continue;
+        }
+        if (S_ISDIR(st.st_mode)) {
+            ESP_LOGI(TAG, "%*s[DIR ] %s", depth * 2, "", child);
+            list_flash_tree(child, depth + 1);
+        } else {
+            ESP_LOGI(TAG, "%*s[FILE] %s (%ld bytes)",
+                     depth * 2, "", child, (long)st.st_size);
         }
     }
     closedir(dir);
+}
+
+static uint8_t scan_mp3_tracks(void)
+{
+    if (!usb_msc_is_app_mode()) return 0;
+    DIR *dir = opendir(MUSIC_DIR);
+    if (!dir) {
+        ESP_LOGE(TAG, "opendir('%s') failed: errno=%d (%s)",
+                 MUSIC_DIR, errno, strerror(errno));
+        return 0;
+    }
+    uint8_t count = 0;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        const char *ext = strrchr(entry->d_name, '.');
+        if (ext && strcasecmp(ext, ".mp3") == 0 && count < UINT8_MAX) ++count;
+    }
+    closedir(dir);
+    ESP_LOGI(TAG, "MP3 scan: %u track(s)", count);
+    return count;
 }
 
 /* Slideshow task - shows images from images/<track>/ while playing */
@@ -278,6 +370,12 @@ static void slideshow_task(void *param)
     uint8_t img_index = 0;
 
     while (1) {
+        // Skip slideshow if in menu mode
+        if (g_menu_state != MENU_NONE) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+        
         if (audio_player_get_state() == PLAYER_STATE_PLAYING) {
             uint8_t track = audio_player_get_current_track();
 
@@ -305,12 +403,11 @@ static void slideshow_task(void *param)
             }
 
             if (img_count > 0) {
-                ESP_LOGI(TAG, "Image %d/%d", img_index + 1, img_count);
+                ESP_LOGI(TAG, "Image %d/%d: %s", img_index + 1, img_count, image_paths[img_index]);
                 tft_show_image_file(image_paths[img_index]);
                 img_index = (img_index + 1) % img_count;
             }
         } else {
-            // Not playing - show STOP
             display_stop();
             prev_track = 0;
         }
@@ -318,12 +415,7 @@ static void slideshow_task(void *param)
     }
 }
 
-/* Button task
- * GPIO0 short: previous track
- * GPIO0 long (3 s): toggle FATFS owner APP <-> USB
- * GPIO43 short: next track
- * GPIO43 long (2 s): runtime diagnostic melody
- */
+/* Button task with settings menu support */
 static void button_task(void *param)
 {
     (void)param;
@@ -336,6 +428,7 @@ static void button_task(void *param)
     uint8_t current = 1;
 
     while (1) {
+        // Handle GPIO0 button
         if (gpio_get_level(GPIO_NUM_0) == 0) {
             TickType_t pressed_at = xTaskGetTickCount();
             bool long_press = false;
@@ -347,6 +440,43 @@ static void button_task(void *param)
                 vTaskDelay(pdMS_TO_TICKS(20));
             }
             while (gpio_get_level(GPIO_NUM_0) == 0) vTaskDelay(pdMS_TO_TICKS(20));
+
+            // Handle menu navigation
+            if (g_menu_state != MENU_NONE) {
+                if (g_menu_state == MENU_MAIN) {
+                    // Exit menu
+                    g_menu_state = MENU_NONE;
+                    display_stop();
+                } else if (g_menu_state == MENU_VOLUME) {
+                    if (long_press) {
+                        // Back to main menu
+                        g_menu_state = MENU_MAIN;
+                        display_settings_menu();
+                    } else {
+                        // Decrease volume
+                        if (g_volume >= 10) g_volume -= 10;
+                        else g_volume = 0;
+                        apply_volume();
+                        save_settings();
+                        display_settings_menu();
+                    }
+                } else if (g_menu_state == MENU_BRIGHTNESS) {
+                    if (long_press) {
+                        // Back to main menu
+                        g_menu_state = MENU_MAIN;
+                        display_settings_menu();
+                    } else {
+                        // Decrease brightness
+                        if (g_brightness >= 10) g_brightness -= 10;
+                        else g_brightness = 0;
+                        apply_brightness();
+                        save_settings();
+                        display_settings_menu();
+                    }
+                }
+                vTaskDelay(pdMS_TO_TICKS(80));
+                continue;
+            }
 
             if (long_press) {
                 audio_player_stop();
@@ -380,6 +510,7 @@ static void button_task(void *param)
             continue;
         }
 
+        // Handle GPIO43 button
         if (gpio_get_level(GPIO_NUM_43) == 0) {
             TickType_t pressed_at = xTaskGetTickCount();
             bool long_press = false;
@@ -391,6 +522,31 @@ static void button_task(void *param)
                 vTaskDelay(pdMS_TO_TICKS(20));
             }
             while (gpio_get_level(GPIO_NUM_43) == 0) vTaskDelay(pdMS_TO_TICKS(20));
+
+            // Handle menu navigation
+            if (g_menu_state != MENU_NONE) {
+                if (g_menu_state == MENU_MAIN) {
+                    // Enter volume menu
+                    g_menu_state = MENU_VOLUME;
+                    display_settings_menu();
+                } else if (g_menu_state == MENU_VOLUME) {
+                    // Increase volume
+                    if (g_volume <= 90) g_volume += 10;
+                    else g_volume = 100;
+                    apply_volume();
+                    save_settings();
+                    display_settings_menu();
+                } else if (g_menu_state == MENU_BRIGHTNESS) {
+                    // Increase brightness
+                    if (g_brightness <= 90) g_brightness += 10;
+                    else g_brightness = 100;
+                    apply_brightness();
+                    save_settings();
+                    display_settings_menu();
+                }
+                vTaskDelay(pdMS_TO_TICKS(80));
+                continue;
+            }
 
             if (long_press) {
                 ESP_LOGI(TAG, "GPIO43 long press: diagnostic melody");
@@ -412,6 +568,19 @@ static void button_task(void *param)
             vTaskDelay(pdMS_TO_TICKS(80));
             continue;
         }
+
+        // Both buttons pressed simultaneously -> enter settings menu
+        if (gpio_get_level(GPIO_NUM_0) == 0 && gpio_get_level(GPIO_NUM_43) == 0) {
+            ESP_LOGI(TAG, "Both buttons pressed: entering settings menu");
+            audio_player_stop();
+            g_menu_state = MENU_MAIN;
+            display_settings_menu();
+            // Wait for release
+            while (gpio_get_level(GPIO_NUM_0) == 0 || gpio_get_level(GPIO_NUM_43) == 0) {
+                vTaskDelay(pdMS_TO_TICKS(20));
+            }
+        }
+
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
@@ -428,15 +597,20 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
+    // Load saved settings
+    load_settings();
+
     // Initialize TFT
     tft_init();
+    apply_brightness();
 
     // Initialize audio
     audio_player_init();
+    apply_volume();
 
     // Initialize USB (CDC ACM + MSC) - also mounts FATFS
     usb_msc_init();
-    vTaskDelay(pdMS_TO_TICKS(200)); // Let TinyUSB settle
+    vTaskDelay(pdMS_TO_TICKS(200));
 
     // Create default directories after FS is mounted
     mkdir(MUSIC_DIR, 0777);
@@ -446,6 +620,7 @@ void app_main(void)
     list_flash_tree(STORAGE_MOUNT_POINT, 0);
     ESP_LOGI(TAG, "=== END FLASH TREE ===");
 
+    // Test MP3 file
     const char *test_path = MUSIC_DIR "/1.mp3";
     struct stat test_st;
     errno = 0;
@@ -455,25 +630,10 @@ void app_main(void)
         ESP_LOGE(TAG, "stat test FAIL: %s, errno=%d (%s)",
                  test_path, errno, strerror(errno));
     }
-    errno = 0;
-    FILE *test_f = fopen(test_path, "rb");
-    if (test_f) {
-        unsigned char head[16] = {0};
-        size_t got = fread(head, 1, sizeof(head), test_f);
-        fclose(test_f);
-        ESP_LOGI(TAG,
-                 "fopen test OK: read=%u head=%02X %02X %02X %02X %02X %02X %02X %02X",
-                 (unsigned)got, head[0], head[1], head[2], head[3],
-                 head[4], head[5], head[6], head[7]);
-    } else {
-        ESP_LOGE(TAG, "fopen test FAIL: %s, errno=%d (%s)",
-                 test_path, errno, strerror(errno));
-    }
 
-    /* Runtime test: no strapping pin needs to be held at reset. */
+    // Start diagnostic melody
     ESP_LOGI(TAG, "Starting automatic audio diagnostic");
     audio_player_play_test_tone();
-
 
     // Show STOP screen
     display_stop();
@@ -487,4 +647,5 @@ void app_main(void)
     ESP_LOGI(TAG, "System ready");
     ESP_LOGI(TAG, "GPIO0 short=Prev, long 3s=APP/USB storage owner");
     ESP_LOGI(TAG, "GPIO43 short=Next, long 2s=diagnostic melody");
+    ESP_LOGI(TAG, "Settings: volume=%d%%, brightness=%d%%", g_volume, g_brightness);
 }
