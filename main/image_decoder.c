@@ -187,7 +187,7 @@ static bool decode_jpeg(const char *filepath, decoded_image_t *out_image)
     }
     fclose(f);
 
-    // Decode JPEG
+    // Decode JPEG using esp_jpeg API
     jpeg_dec_handle_t jpeg_dec = NULL;
     jpeg_dec_config_t config = {
         .output_type = JPEG_RAW_TYPE_RGB565_LE,
