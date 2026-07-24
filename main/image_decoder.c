@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include "esp_log.h"
 #include "esp_heap_caps.h"
-#include "esp_jpeg_decode.h"
+#include "jpeg_decoder.h"
 #include "image_decoder.h"
 
 static const char *TAG = "IMG_DEC";
