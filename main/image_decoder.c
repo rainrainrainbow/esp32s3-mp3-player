@@ -150,7 +150,7 @@ static bool decode_bmp(const char *filepath, decoded_image_t *out_image)
     return true;
 }
 
-// Decode JPEG file using esp_jpeg
+// Decode JPEG file using esp_jpeg API
 static bool decode_jpeg(const char *filepath, decoded_image_t *out_image)
 {
     FILE *f = fopen(filepath, "rb");
@@ -187,30 +187,24 @@ static bool decode_jpeg(const char *filepath, decoded_image_t *out_image)
     }
     fclose(f);
 
-    // Decode JPEG using esp_jpeg API
-    jpeg_dec_handle_t jpeg_dec = NULL;
-    jpeg_dec_config_t config = {
-        .output_type = JPEG_RAW_TYPE_RGB565_LE,
-        .rotate = JPEG_ROTATE_0,
+    // First get image info
+    esp_jpeg_image_cfg_t cfg = {
+        .indata = jpeg_data,
+        .indata_size = file_size,
+        .outbuf = NULL,
+        .outbuf_size = 0,
+        .out_format = JPEG_IMAGE_FORMAT_RGB565,
+        .out_scale = JPEG_IMAGE_SCALE_0,
+        .flags = {0},
+        .advanced = {
+            .working_buffer = NULL,
+            .working_buffer_size = 0
+        }
     };
 
-    jpeg_dec = jpeg_dec_open(&config);
-    if (!jpeg_dec) {
-        ESP_LOGE(TAG, "jpeg_dec_open failed");
-        free(jpeg_data);
-        return false;
-    }
-
-    jpeg_dec_io_t jpeg_io = {
-        .inbuf = jpeg_data,
-        .inbuf_len = file_size,
-        .inbuf_remain = file_size,
-    };
-
-    jpeg_dec_header_info_t out_info = {0};
-    if (jpeg_dec_header(jpeg_dec, &jpeg_io, &out_info) != ESP_OK) {
-        ESP_LOGE(TAG, "jpeg_dec_header failed");
-        jpeg_dec_close(jpeg_dec);
+    esp_jpeg_image_output_t out_info = {0};
+    if (esp_jpeg_get_image_info(&cfg, &out_info) != ESP_OK) {
+        ESP_LOGE(TAG, "esp_jpeg_get_image_info failed");
         free(jpeg_data);
         return false;
     }
@@ -224,13 +218,21 @@ static bool decode_jpeg(const char *filepath, decoded_image_t *out_image)
     uint16_t *out_buf = heap_caps_malloc(out_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!out_buf) {
         ESP_LOGE(TAG, "OOM for JPEG output");
-        jpeg_dec_close(jpeg_dec);
         free(jpeg_data);
         return false;
     }
 
-    jpeg_dec_process(jpeg_dec, &jpeg_io, &out_info, (uint8_t *)out_buf);
-    jpeg_dec_close(jpeg_dec);
+    // Decode JPEG
+    cfg.outbuf = (uint8_t *)out_buf;
+    cfg.outbuf_size = out_size;
+
+    if (esp_jpeg_decode(&cfg, &out_info) != ESP_OK) {
+        ESP_LOGE(TAG, "esp_jpeg_decode failed");
+        free(out_buf);
+        free(jpeg_data);
+        return false;
+    }
+
     free(jpeg_data);
 
     out_image->pixels = out_buf;
