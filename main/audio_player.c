@@ -35,6 +35,7 @@ static uint8_t current_track = 0;
 static TaskHandle_t audio_task_handle = NULL;
 static i2s_chan_handle_t i2s_tx_handle = NULL;
 static uint32_t i2s_sample_rate = AUDIO_DEFAULT_RATE;
+static uint8_t current_volume = 80;  /* Default volume 0-100 */
 
 static esp_err_t es8311_write_reg(uint8_t reg, uint8_t value)
 {
@@ -511,3 +512,17 @@ void audio_player_resume(void)
 
 player_state_t audio_player_get_state(void) { return player_state; }
 uint8_t audio_player_get_current_track(void) { return current_track; }
+
+void audio_player_set_volume(uint8_t volume)
+{
+    /* ES8311 volume register 0x32: 0x00=max, 0xFF=mute */
+    /* Map 0-100 to 0x00-0xBF (0xBF is about -115dB, effectively mute) */
+    if (volume > 100) volume = 100;
+    current_volume = volume;
+    
+    /* Inverse mapping: 100 -> 0x00, 0 -> 0xBF */
+    uint8_t reg_val = (uint8_t)(0xBF - (volume * 0xBF / 100));
+    
+    ESP_LOGI(TAG, "Setting volume to %d%% (reg 0x32 = 0x%02X)", volume, reg_val);
+    codec_write(0x32, reg_val);
+}
