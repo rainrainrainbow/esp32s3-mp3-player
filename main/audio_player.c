@@ -108,40 +108,33 @@ static bool es8311_init(void)
     gpio_set_direction(AUDIO_CODEC_PA_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(AUDIO_CODEC_PA_PIN, 0);
 
-    /* Reset and power-on command from Espressif's official ES8311 driver. */
     if (!codec_write(0x00, 0x1F)) return false;
     vTaskDelay(pdMS_TO_TICKS(20));
     if (!codec_write(0x00, 0x00)) return false;
     if (!codec_write(0x00, 0x80)) return false;
 
-    /*
-     * Clock setup for MCLK = 256 * sample_rate.
-     * With 16-bit stereo I2S, BCLK = 32 * sample_rate.
-     */
-    if (!codec_write(0x01, 0x3F)) return false; /* MCLK pin, enable clocks */
-    if (!codec_write(0x02, 0x00)) return false; /* pre-divider/multiplier */
-    if (!codec_write(0x03, 0x10)) return false; /* ADC OSR */
-    if (!codec_write(0x04, 0x10)) return false; /* DAC OSR */
-    if (!codec_write(0x05, 0x00)) return false; /* ADC/DAC dividers */
-    if (!codec_write(0x06, 0x03)) return false; /* BCLK divider */
-    if (!codec_write(0x07, 0x00)) return false; /* LRCK high divider */
-    if (!codec_write(0x08, 0xFF)) return false; /* LRCK low divider: 256 */
+    if (!codec_write(0x01, 0x3F)) return false;
+    if (!codec_write(0x02, 0x00)) return false;
+    if (!codec_write(0x03, 0x10)) return false;
+    if (!codec_write(0x04, 0x10)) return false;
+    if (!codec_write(0x05, 0x00)) return false;
+    if (!codec_write(0x06, 0x03)) return false;
+    if (!codec_write(0x07, 0x00)) return false;
+    if (!codec_write(0x08, 0xFF)) return false;
 
-    /* Slave, Philips I2S, 16-bit input/output. */
-    if (!codec_write(0x09, 0x0C)) return false; /* serial data input (DAC) */
-    if (!codec_write(0x0A, 0x0C)) return false; /* serial data output (ADC) */
+    if (!codec_write(0x09, 0x0C)) return false;
+    if (!codec_write(0x0A, 0x0C)) return false;
 
-    /* Analog and DAC power path from official driver. */
     if (!codec_write(0x0D, 0x01)) return false;
     if (!codec_write(0x0E, 0x02)) return false;
-    if (!codec_write(0x12, 0x00)) return false; /* DAC powered up */
-    if (!codec_write(0x13, 0x10)) return false; /* DAC -> output driver */
+    if (!codec_write(0x12, 0x00)) return false;
+    if (!codec_write(0x13, 0x10)) return false;
     if (!codec_write(0x1C, 0x6A)) return false;
-    if (!codec_write(0x37, 0x08)) return false; /* bypass DAC EQ */
+    if (!codec_write(0x37, 0x08)) return false;
 
-    /* Unmute and set volume to 50% (0x60 = -18dB, much quieter than 0xBF). */
+    /* Volume at 50% (0x60 = -18dB). */
     if (!codec_write(0x31, 0x00)) return false;
-    if (!codec_write(0x32, 0x60)) return false;  /* 50% volume */
+    if (!codec_write(0x32, 0x60)) return false;
 
     ESP_LOGI(TAG, "ES8311 initialized with official 16-bit I2S sequence");
     es8311_dump_key_registers();
@@ -247,11 +240,13 @@ static void audio_output_end(void)
     gpio_set_level(AUDIO_CODEC_PA_PIN, 0);
 }
 
-static void playback_cleanup(uint8_t *mp3, int16_t *pcm, int16_t *stereo)
+static void playback_cleanup(uint8_t *mp3, int16_t *pcm, int16_t *stereo,
+                             mp3dec_t *dec)
 {
     free(mp3);
     free(pcm);
     free(stereo);
+    free(dec);
     audio_output_end();
     player_state = PLAYER_STATE_STOPPED;
     audio_task_handle = NULL;
@@ -308,17 +303,32 @@ static void audio_playback_task(void *param)
         return;
     }
 
+    /*
+     * ALL large buffers allocated on heap (PSRAM preferred).
+     * mp3dec_t is ~8KB and MUST NOT be on the task stack.
+     */
     uint8_t *mp3 = heap_caps_malloc((size_t)file_size,
                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!mp3) mp3 = malloc((size_t)file_size);
+
     int16_t *pcm = heap_caps_malloc(MINIMP3_MAX_SAMPLES_PER_FRAME * sizeof(int16_t),
                                     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!pcm) pcm = malloc(MINIMP3_MAX_SAMPLES_PER_FRAME * sizeof(int16_t));
+
     int16_t *stereo = heap_caps_malloc(MINIMP3_MAX_SAMPLES_PER_FRAME * sizeof(int16_t),
                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!mp3 || !pcm || !stereo) {
-        ESP_LOGE(TAG, "Audio buffer allocation failed (file=%ld)", file_size);
+    if (!stereo) stereo = malloc(MINIMP3_MAX_SAMPLES_PER_FRAME * sizeof(int16_t));
+
+    /* CRITICAL: mp3dec_t is ~8KB, must be on heap! */
+    mp3dec_t *dec = heap_caps_malloc(sizeof(mp3dec_t),
+                                     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!dec) dec = malloc(sizeof(mp3dec_t));
+
+    if (!mp3 || !pcm || !stereo || !dec) {
+        ESP_LOGE(TAG, "Audio buffer allocation failed (file=%ld, dec=%u)",
+                 file_size, (unsigned)sizeof(mp3dec_t));
         fclose(f);
-        free(mp3); free(pcm); free(stereo);
+        free(mp3); free(pcm); free(stereo); free(dec);
         player_state = PLAYER_STATE_STOPPED;
         audio_task_handle = NULL;
         vTaskDelete(NULL);
@@ -328,21 +338,20 @@ static void audio_playback_task(void *param)
     ESP_LOGI(TAG, "Reading MP3 file...");
     size_t bytes_read = fread(mp3, 1, (size_t)file_size, f);
     fclose(f);
-    ESP_LOGI(TAG, "fread result: bytes_read=%u (expected=%ld)", (unsigned)bytes_read, file_size);
+    ESP_LOGI(TAG, "fread result: bytes_read=%u (expected=%ld)",
+             (unsigned)bytes_read, file_size);
 
     if (bytes_read != (size_t)file_size) {
         ESP_LOGE(TAG, "Short MP3 read: expected=%ld actual=%u errno=%d (%s)",
                  file_size, (unsigned)bytes_read, errno, strerror(errno));
-        playback_cleanup(mp3, pcm, stereo);
+        playback_cleanup(mp3, pcm, stereo, dec);
         return;
     }
 
-    ESP_LOGI(TAG, "MP3 loaded: %u bytes, first 8 bytes: %02X %02X %02X %02X %02X %02X %02X %02X",
-             (unsigned)bytes_read, mp3[0], mp3[1], mp3[2], mp3[3],
-             mp3[4], mp3[5], mp3[6], mp3[7]);
+    ESP_LOGI(TAG, "MP3 loaded: %u bytes, head=%02X %02X %02X %02X",
+             (unsigned)bytes_read, mp3[0], mp3[1], mp3[2], mp3[3]);
 
-    mp3dec_t dec;
-    mp3dec_init(&dec);
+    mp3dec_init(dec);
     uint8_t *input = mp3;
     int bytes_left = (int)bytes_read;
     bool output_started = false;
@@ -351,7 +360,7 @@ static void audio_playback_task(void *param)
 
     while (bytes_left > 0 && player_state == PLAYER_STATE_PLAYING) {
         mp3dec_frame_info_t info = {0};
-        int samples = mp3dec_decode_frame(&dec, input, bytes_left, pcm, &info);
+        int samples = mp3dec_decode_frame(dec, input, bytes_left, pcm, &info);
         if (info.frame_bytes <= 0) {
             ++input;
             --bytes_left;
@@ -364,7 +373,8 @@ static void audio_playback_task(void *param)
 
         if (!output_started) {
             ESP_LOGI(TAG,
-                     "First MP3 frame: Hz=%d channels=%d samples/ch=%d bitrate=%dk layer=%d skipped=%d",
+                     "First MP3 frame: Hz=%d channels=%d samples/ch=%d "
+                     "bitrate=%dk layer=%d skipped=%d",
                      info.hz, info.channels, samples, info.bitrate_kbps,
                      info.layer, invalid_bytes);
             if (!i2s_set_sample_rate((uint32_t)info.hz)) break;
@@ -372,7 +382,6 @@ static void audio_playback_task(void *param)
             output_started = true;
         }
 
-        /* minimp3 returns sample count PER CHANNEL. */
         if (info.channels == 2) {
             if (write_stereo(pcm, (size_t)samples) != ESP_OK) break;
         } else if (info.channels == 1) {
@@ -389,12 +398,13 @@ static void audio_playback_task(void *param)
     }
 
     if (!output_started) {
-        ESP_LOGE(TAG, "No valid MP3 audio frame decoded; skipped=%d bytes", invalid_bytes);
+        ESP_LOGE(TAG, "No valid MP3 audio frame decoded; skipped=%d bytes",
+                 invalid_bytes);
     } else {
         ESP_LOGI(TAG, "Playback ended: decoded_frames=%d remaining=%d",
                  decoded_frames, bytes_left);
     }
-    playback_cleanup(mp3, pcm, stereo);
+    playback_cleanup(mp3, pcm, stereo, dec);
 }
 
 void audio_player_play_test_tone(void)
@@ -469,8 +479,9 @@ bool audio_player_play_track(uint8_t track_num)
 
     current_track = track_num;
     player_state = PLAYER_STATE_PLAYING;
+    /* Stack increased to 32768 to handle ESP_LOG formatting overhead. */
     BaseType_t ok = xTaskCreatePinnedToCore(audio_playback_task, "audio_play",
-                                            16384,
+                                            32768,
                                             (void *)(uintptr_t)track_num,
                                             5, &audio_task_handle, 1);
     if (ok != pdPASS) {
