@@ -7,7 +7,7 @@
  * - MP3 playback from SPI flash FATFS via ES8311
  * - TFT image display (BMP/JPG slideshow, synced with track)
  * - GPIO0 = Prev track, GPIO43 = Next track
- * - Settings menu with volume/brightness control
+ * - Long press GPIO43 (2s) = Settings menu
  */
 
 #include <stdio.h>
@@ -549,10 +549,11 @@ static void button_task(void *param)
             }
 
             if (long_press) {
-                ESP_LOGI(TAG, "GPIO43 long press: diagnostic melody");
+                // Long press GPIO43 = enter settings menu
+                ESP_LOGI(TAG, "GPIO43 long press: entering settings menu");
                 audio_player_stop();
-                vTaskDelay(pdMS_TO_TICKS(100));
-                audio_player_play_test_tone();
+                g_menu_state = MENU_MAIN;
+                display_settings_menu();
             } else if (usb_msc_is_app_mode()) {
                 max_tracks = scan_mp3_tracks();
                 if (max_tracks == 0) {
@@ -567,18 +568,6 @@ static void button_task(void *param)
             }
             vTaskDelay(pdMS_TO_TICKS(80));
             continue;
-        }
-
-        // Both buttons pressed simultaneously -> enter settings menu
-        if (gpio_get_level(GPIO_NUM_0) == 0 && gpio_get_level(GPIO_NUM_43) == 0) {
-            ESP_LOGI(TAG, "Both buttons pressed: entering settings menu");
-            audio_player_stop();
-            g_menu_state = MENU_MAIN;
-            display_settings_menu();
-            // Wait for release
-            while (gpio_get_level(GPIO_NUM_0) == 0 || gpio_get_level(GPIO_NUM_43) == 0) {
-                vTaskDelay(pdMS_TO_TICKS(20));
-            }
         }
 
         vTaskDelay(pdMS_TO_TICKS(20));
@@ -646,6 +635,6 @@ void app_main(void)
 
     ESP_LOGI(TAG, "System ready");
     ESP_LOGI(TAG, "GPIO0 short=Prev, long 3s=APP/USB storage owner");
-    ESP_LOGI(TAG, "GPIO43 short=Next, long 2s=diagnostic melody");
+    ESP_LOGI(TAG, "GPIO43 short=Next, long 2s=Settings menu");
     ESP_LOGI(TAG, "Settings: volume=%d%%, brightness=%d%%", g_volume, g_brightness);
 }
