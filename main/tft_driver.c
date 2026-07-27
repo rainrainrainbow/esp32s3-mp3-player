@@ -18,7 +18,8 @@
 
 static const char *TAG = "TFT";
 
-static spi_device_handle_t spi_dev;
+static spi_device_handle_t spi_dev = NULL;
+static bool tft_initialized = false;
 
 // LCD commands
 #define CMD_NOP        0x00
@@ -35,12 +36,12 @@ static spi_device_handle_t spi_dev;
 #define CMD_COLMOD     0x3A
 
 // MADCTL bits
-#define MADCTL_MY  0x80  // Row Address Order
-#define MADCTL_MX  0x40  // Column Address Order
-#define MADCTL_MV  0x20  // Row/Column Exchange
-#define MADCTL_ML  0x10  // Vertical Refresh Order
-#define MADCTL_BGR 0x08  // RGB/BGR Order
-#define MADCTL_MH  0x04  // Horizontal Refresh Order
+#define MADCTL_MY  0x80
+#define MADCTL_MX  0x40
+#define MADCTL_MV  0x20
+#define MADCTL_ML  0x10
+#define MADCTL_BGR 0x08
+#define MADCTL_MH  0x04
 
 // Backlight PWM config
 #define LEDC_TIMER      LEDC_TIMER_1
@@ -50,6 +51,11 @@ static spi_device_handle_t spi_dev;
 
 static void tft_send_cmd(uint8_t cmd)
 {
+    if (!tft_initialized || !spi_dev) {
+        ESP_LOGE(TAG, "TFT not initialized, skipping cmd 0x%02X", cmd);
+        return;
+    }
+    
     spi_transaction_t t = {
         .length = 8,
         .tx_buffer = &cmd,
@@ -64,7 +70,8 @@ static void tft_send_cmd(uint8_t cmd)
 
 static void tft_send_data(uint8_t *data, size_t len)
 {
-    if (len == 0) return;
+    if (!tft_initialized || !spi_dev || len == 0) return;
+    
     while (len > 0) {
         size_t chunk = (len > 4096) ? 4096 : len;
         spi_transaction_t t = {
@@ -85,7 +92,7 @@ static void tft_send_data(uint8_t *data, size_t len)
 /* Send 16-bit pixel data with byte-swap (ESP32 LE -> ST7789 BE) */
 static void tft_send_data16(uint16_t *data, size_t pixel_count)
 {
-    if (pixel_count == 0) return;
+    if (!tft_initialized || !spi_dev || pixel_count == 0) return;
     
     // Allocate temp buffer for byte-swapped data
     size_t byte_len = pixel_count * 2;
@@ -126,6 +133,8 @@ static void tft_send_data16(uint16_t *data, size_t pixel_count)
 
 static void tft_set_addr_window(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
 {
+    if (!tft_initialized) return;
+    
     uint8_t data[4];
     
     tft_send_cmd(CMD_CASET);
@@ -160,7 +169,10 @@ void tft_init(void)
         .freq_hz = LEDC_FREQ,
         .clk_cfg = LEDC_AUTO_CLK,
     };
-    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+    esp_err_t ret = ledc_timer_config(&ledc_timer);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "LEDC timer config failed: %s", esp_err_to_name(ret));
+    }
 
     ledc_channel_config_t ledc_channel = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
@@ -171,7 +183,10 @@ void tft_init(void)
         .duty = 768, // 75% brightness
         .hpoint = 0,
     };
-    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+    ret = ledc_channel_config(&ledc_channel);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "LEDC channel config failed: %s", esp_err_to_name(ret));
+    }
     ESP_LOGI(TAG, "Backlight initialized at 75%%");
 
     // Configure control pins
@@ -179,7 +194,41 @@ void tft_init(void)
     gpio_set_direction(DISPLAY_CS_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_level(DISPLAY_CS_GPIO, 1);
 
-    // Software reset (no RST pin)
+    // Initialize SPI bus
+    ESP_LOGI(TAG, "Initializing SPI bus...");
+    spi_bus_config_t bus_cfg = {
+        .mosi_io_num = DISPLAY_MOSI_GPIO,
+        .miso_io_num = -1,
+        .sclk_io_num = DISPLAY_CLK_GPIO,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 32768,
+    };
+
+    ret = spi_bus_initialize(DISPLAY_SPI_HOST, &bus_cfg, SPI_DMA_CH_AUTO);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "SPI bus initialize failed: %s", esp_err_to_name(ret));
+        return;
+    }
+    ESP_LOGI(TAG, "SPI bus initialized");
+
+    // Add SPI device
+    ESP_LOGI(TAG, "Adding SPI device...");
+    spi_device_interface_config_t dev_cfg = {
+        .mode = DISPLAY_SPI_MODE,
+        .clock_speed_hz = 10 * 1000 * 1000, // 10 MHz (lower for stability)
+        .spics_io_num = DISPLAY_CS_GPIO,
+        .queue_size = 7,
+    };
+
+    ret = spi_bus_add_device(DISPLAY_SPI_HOST, &dev_cfg, &spi_dev);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "SPI bus add device failed: %s", esp_err_to_name(ret));
+        return;
+    }
+    ESP_LOGI(TAG, "SPI device added, handle=%p", spi_dev);
+
+    // Software reset
     ESP_LOGI(TAG, "Sending software reset...");
     tft_send_cmd(CMD_SWRESET);
     vTaskDelay(pdMS_TO_TICKS(150));
@@ -222,6 +271,7 @@ void tft_init(void)
     tft_send_cmd(CMD_DISPON);
     vTaskDelay(pdMS_TO_TICKS(100));
 
+    tft_initialized = true;
     ESP_LOGI(TAG, "ST7789 initialization complete");
 }
 
@@ -247,6 +297,11 @@ void tft_set_brightness(uint8_t percent)
 
 void tft_fill_screen(uint16_t color)
 {
+    if (!tft_initialized) {
+        ESP_LOGE(TAG, "TFT not initialized, cannot fill screen");
+        return;
+    }
+    
     ESP_LOGI(TAG, "Filling screen with color 0x%04X", color);
     tft_set_addr_window(0, 0, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 1);
     size_t pixels = DISPLAY_WIDTH * DISPLAY_HEIGHT;
@@ -263,6 +318,7 @@ void tft_fill_screen(uint16_t color)
 
 void tft_draw_pixel(uint16_t x, uint16_t y, uint16_t color)
 {
+    if (!tft_initialized) return;
     if (x >= DISPLAY_WIDTH || y >= DISPLAY_HEIGHT) return;
     tft_set_addr_window(x, y, x, y);
     tft_send_data16(&color, 1);
@@ -270,6 +326,11 @@ void tft_draw_pixel(uint16_t x, uint16_t y, uint16_t color)
 
 void tft_show_image_file(const char *filepath)
 {
+    if (!tft_initialized) {
+        ESP_LOGE(TAG, "TFT not initialized, cannot show image");
+        return;
+    }
+    
     decoded_image_t img = {0};
 
     ESP_LOGI(TAG, "Decoding image: %s", filepath);
@@ -291,6 +352,11 @@ void tft_show_image_file(const char *filepath)
 /* Welcome screen with basic info */
 void tft_show_welcome(void)
 {
+    if (!tft_initialized) {
+        ESP_LOGE(TAG, "TFT not initialized, cannot show welcome");
+        return;
+    }
+    
     ESP_LOGI(TAG, "Showing welcome screen...");
     
     // Blue background
