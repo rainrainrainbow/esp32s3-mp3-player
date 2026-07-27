@@ -19,7 +19,6 @@
 static const char *TAG = "TFT";
 
 static spi_device_handle_t spi_dev;
-static uint16_t *fb = NULL; // framebuffer for display
 
 // LCD commands
 #define CMD_SWRESET    0x01
@@ -73,19 +72,37 @@ static void tft_send_data(uint8_t *data, size_t len)
     }
 }
 
+/* Send 16-bit pixel data with byte-swap (ESP32 LE -> ST7789 BE) */
 static void tft_send_data16(uint16_t *data, size_t len)
 {
+    // Allocate temp buffer for byte-swapped data
+    size_t byte_len = len * 2;
+    uint8_t *swapped = heap_caps_malloc(byte_len, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    if (!swapped) {
+        ESP_LOGE(TAG, "OOM for SPI swap buffer");
+        return;
+    }
+    
+    uint8_t *src = (uint8_t *)data;
+    for (size_t i = 0; i < len; i++) {
+        swapped[i * 2]     = src[i * 2 + 1]; // high byte first
+        swapped[i * 2 + 1] = src[i * 2];     // low byte second
+    }
+    
+    size_t offset = 0;
     while (len > 0) {
         size_t chunk = (len > 2048) ? 2048 : len;
         spi_transaction_t t = {
             .length = chunk * 16,
-            .tx_buffer = data,
+            .tx_buffer = swapped + offset,
         };
         gpio_set_level(DISPLAY_DC_GPIO, 1);
         spi_device_transmit(spi_dev, &t);
-        data += chunk;
+        offset += chunk * 2;
         len -= chunk;
     }
+    
+    free(swapped);
 }
 
 static void tft_set_addr_window(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2)
@@ -191,16 +208,12 @@ void tft_init(void)
     vTaskDelay(pdMS_TO_TICKS(120));
     tft_send_cmd(CMD_DISPON);
 
-    // No framebuffer - use direct SPI write
-    fb = NULL;
-
     tft_fill_screen(0x0000); // black
     ESP_LOGI(TAG, "TFT initialized");
 }
 
 void tft_set_backlight(uint8_t brightness)
 {
-    // Simple on/off for backward compatibility
     if (brightness == 0) {
         ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, 0);
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL);
@@ -213,7 +226,6 @@ void tft_set_backlight(uint8_t brightness)
 void tft_set_brightness(uint8_t percent)
 {
     if (percent > 100) percent = 100;
-    // 10-bit resolution: 0-1023
     uint32_t duty = (percent * 1023) / 100;
     ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, duty);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL);
@@ -243,7 +255,6 @@ void tft_show_image_file(const char *filepath)
 {
     decoded_image_t img = {0};
 
-    // Decode and scale to display size
     if (!decode_image_file(filepath, DISPLAY_WIDTH, DISPLAY_HEIGHT, &img)) {
         ESP_LOGE(TAG, "Failed to decode image: %s", filepath);
         return;
@@ -252,15 +263,9 @@ void tft_show_image_file(const char *filepath)
     ESP_LOGI(TAG, "Displaying %s (%dx%d), first pixel=0x%04X", 
              filepath, img.width, img.height, img.pixels[0]);
 
-    // Swap bytes for SPI (ESP32 is little-endian, ST7789 expects big-endian RGB565)
-    size_t pixel_count = (size_t)img.width * img.height;
-    for (size_t i = 0; i < pixel_count; i++) {
-        img.pixels[i] = ((img.pixels[i] & 0xFF) << 8) | ((img.pixels[i] >> 8) & 0xFF);
-    }
-
-    // Send to display
+    // Send to display (byte-swap handled in tft_send_data16)
     tft_set_addr_window(0, 0, img.width - 1, img.height - 1);
-    tft_send_data16(img.pixels, pixel_count);
+    tft_send_data16(img.pixels, (size_t)img.width * img.height);
 
     free_decoded_image(&img);
 }
