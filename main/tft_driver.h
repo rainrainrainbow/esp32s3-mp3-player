@@ -9,6 +9,7 @@ void tft_set_backlight(uint8_t brightness);
 void tft_fill_screen(uint16_t color);
 void tft_draw_pixel(uint16_t x, uint16_t y, uint16_t color);
 void tft_show_image_file(const char *filepath);
+void tft_show_welcome(void);
 
 // Backlight control with PWM-like levels (0-100)
 void tft_set_brightness(uint8_t percent);
