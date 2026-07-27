@@ -249,11 +249,18 @@ void tft_show_image_file(const char *filepath)
         return;
     }
 
-    ESP_LOGI(TAG, "Displaying %s (%dx%d)", filepath, img.width, img.height);
+    ESP_LOGI(TAG, "Displaying %s (%dx%d), first pixel=0x%04X", 
+             filepath, img.width, img.height, img.pixels[0]);
+
+    // Swap bytes for SPI (ESP32 is little-endian, ST7789 expects big-endian RGB565)
+    size_t pixel_count = (size_t)img.width * img.height;
+    for (size_t i = 0; i < pixel_count; i++) {
+        img.pixels[i] = ((img.pixels[i] & 0xFF) << 8) | ((img.pixels[i] >> 8) & 0xFF);
+    }
 
     // Send to display
     tft_set_addr_window(0, 0, img.width - 1, img.height - 1);
-    tft_send_data16(img.pixels, (size_t)img.width * img.height);
+    tft_send_data16(img.pixels, pixel_count);
 
     free_decoded_image(&img);
 }
