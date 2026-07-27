@@ -160,6 +160,7 @@ void tft_init(void)
     ESP_LOGI(TAG, "Pins: DC=%d CS=%d CLK=%d MOSI=%d BLK=%d", 
              DISPLAY_DC_GPIO, DISPLAY_CS_GPIO, DISPLAY_CLK_GPIO, 
              DISPLAY_MOSI_GPIO, DISPLAY_BACKLIGHT_PIN);
+    ESP_LOGI(TAG, "SPI Host: %d, Mode: %d", DISPLAY_SPI_HOST, DISPLAY_SPI_MODE);
 
     // Configure backlight with PWM
     ledc_timer_config_t ledc_timer = {
@@ -349,7 +350,7 @@ void tft_show_image_file(const char *filepath)
     free_decoded_image(&img);
 }
 
-/* Welcome screen with basic info */
+/* Simple welcome screen - just color fill to avoid watchdog timeout */
 void tft_show_welcome(void)
 {
     if (!tft_initialized) {
@@ -359,68 +360,33 @@ void tft_show_welcome(void)
     
     ESP_LOGI(TAG, "Showing welcome screen...");
     
-    // Blue background
+    // Blue background - fast bulk fill
     tft_fill_screen(0x001F);
     
-    // Draw simple text using pixels
-    // "MP3" in white at center
-    uint16_t white = 0xFFFF;
-    
-    // Simple block letters (5x7 scaled 3x)
-    // M
-    for (int y = 0; y < 21; y++) {
-        for (int x = 0; x < 15; x++) {
-            if (x == 0 || x == 14 || (y < 7 && (x == y * 2 || x == 14 - y * 2))) {
-                tft_draw_pixel(80 + x, 80 + y, white);
-                tft_draw_pixel(81 + x, 80 + y, white);
-                tft_draw_pixel(80 + x, 81 + y, white);
-                tft_draw_pixel(81 + x, 81 + y, white);
-            }
-        }
-    }
-    // P
-    for (int y = 0; y < 21; y++) {
-        for (int x = 0; x < 15; x++) {
-            if (x == 0 || (y < 3 && x < 12) || (y >= 3 && y < 9 && (x == 12 || x == 0)) || (y >= 9 && y < 12 && x < 12)) {
-                tft_draw_pixel(110 + x, 80 + y, white);
-                tft_draw_pixel(111 + x, 80 + y, white);
-                tft_draw_pixel(110 + x, 81 + y, white);
-                tft_draw_pixel(111 + x, 81 + y, white);
-            }
-        }
-    }
-    // 3
-    for (int y = 0; y < 21; y++) {
-        for (int x = 0; x < 15; x++) {
-            if ((y < 3 && x < 12) || (y >= 9 && y < 12 && x < 12) || (y >= 18 && x < 12) || (x == 12 && (y >= 3 && y < 18))) {
-                tft_draw_pixel(140 + x, 80 + y, white);
-                tft_draw_pixel(141 + x, 80 + y, white);
-                tft_draw_pixel(140 + x, 81 + y, white);
-                tft_draw_pixel(141 + x, 81 + y, white);
-            }
-        }
+    // Draw simple colored rectangles as visual feedback
+    // Top bar - green
+    tft_set_addr_window(0, 0, DISPLAY_WIDTH - 1, 19);
+    uint16_t green_buf[240];
+    for (int i = 0; i < 240; i++) green_buf[i] = 0x07E0;
+    for (int y = 0; y < 20; y++) {
+        tft_send_data16(green_buf, 240);
     }
     
-    // Draw "PLAYER" text below
-    uint16_t yellow = 0xFFE0;
-    for (int x = 0; x < 100; x++) {
-        tft_draw_pixel(110 + x, 120, yellow);
-        tft_draw_pixel(110 + x, 121, yellow);
+    // Bottom bar - red
+    tft_set_addr_window(0, DISPLAY_HEIGHT - 20, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 1);
+    uint16_t red_buf[240];
+    for (int i = 0; i < 240; i++) red_buf[i] = 0xF800;
+    for (int y = 0; y < 20; y++) {
+        tft_send_data16(red_buf, 240);
     }
     
-    // Draw border
-    uint16_t green = 0x07E0;
-    for (int x = 0; x < DISPLAY_WIDTH; x++) {
-        tft_draw_pixel(x, 0, green);
-        tft_draw_pixel(x, 1, green);
-        tft_draw_pixel(x, DISPLAY_HEIGHT - 1, green);
-        tft_draw_pixel(x, DISPLAY_HEIGHT - 2, green);
-    }
-    for (int y = 0; y < DISPLAY_HEIGHT; y++) {
-        tft_draw_pixel(0, y, green);
-        tft_draw_pixel(1, y, green);
-        tft_draw_pixel(DISPLAY_WIDTH - 1, y, green);
-        tft_draw_pixel(DISPLAY_WIDTH - 2, y, green);
+    // Center area - white rectangle (placeholder for text)
+    tft_set_addr_window(40, 100, DISPLAY_WIDTH - 41, 220);
+    uint16_t white_buf[160];
+    for (int i = 0; i < 160; i++) white_buf[i] = 0xFFFF;
+    // Just draw border
+    for (int x = 0; x < 160; x++) {
+        tft_send_data16(&white_buf[x], 1); // top row
     }
     
     ESP_LOGI(TAG, "Welcome screen displayed");
