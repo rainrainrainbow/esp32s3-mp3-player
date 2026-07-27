@@ -591,6 +591,11 @@ void app_main(void)
 
     // Initialize TFT
     tft_init();
+    
+    // Show welcome screen
+    tft_show_welcome();
+    vTaskDelay(pdMS_TO_TICKS(2000)); // Show for 2 seconds
+    
     apply_brightness();
 
     // Initialize audio
