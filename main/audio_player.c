@@ -133,9 +133,9 @@ static bool es8311_init(void)
     if (!codec_write(0x1C, 0x6A)) return false;
     if (!codec_write(0x37, 0x08)) return false;
 
-    /* Volume at 50% (0x60 = -18dB). */
+    /* Volume at 50% (0x80 = mid range). */
     if (!codec_write(0x31, 0x00)) return false;
-    if (!codec_write(0x32, 0x60)) return false;
+    if (!codec_write(0x32, 0x80)) return false;
 
     ESP_LOGI(TAG, "ES8311 initialized with official 16-bit I2S sequence");
     es8311_dump_key_registers();
@@ -304,10 +304,6 @@ static void audio_playback_task(void *param)
         return;
     }
 
-    /*
-     * ALL large buffers allocated on heap (PSRAM preferred).
-     * mp3dec_t is ~8KB and MUST NOT be on the task stack.
-     */
     uint8_t *mp3 = heap_caps_malloc((size_t)file_size,
                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!mp3) mp3 = malloc((size_t)file_size);
@@ -320,7 +316,6 @@ static void audio_playback_task(void *param)
                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!stereo) stereo = malloc(MINIMP3_MAX_SAMPLES_PER_FRAME * sizeof(int16_t));
 
-    /* CRITICAL: mp3dec_t is ~8KB, must be on heap! */
     mp3dec_t *dec = heap_caps_malloc(sizeof(mp3dec_t),
                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!dec) dec = malloc(sizeof(mp3dec_t));
@@ -480,7 +475,6 @@ bool audio_player_play_track(uint8_t track_num)
 
     current_track = track_num;
     player_state = PLAYER_STATE_PLAYING;
-    /* Stack increased to 32768 to handle ESP_LOG formatting overhead. */
     BaseType_t ok = xTaskCreatePinnedToCore(audio_playback_task, "audio_play",
                                             32768,
                                             (void *)(uintptr_t)track_num,
@@ -515,13 +509,13 @@ uint8_t audio_player_get_current_track(void) { return current_track; }
 
 void audio_player_set_volume(uint8_t volume)
 {
-    /* ES8311 volume register 0x32: 0x00=max, 0xFF=mute */
-    /* Map 0-100 to 0x00-0xBF (0xBF is about -115dB, effectively mute) */
+    /* ES8311 volume register 0x32: 0x00=mute, higher value = louder */
+    /* Map 0-100 to 0x00-0xC8 (0xC8 = max volume) */
     if (volume > 100) volume = 100;
     current_volume = volume;
     
-    /* Inverse mapping: 100 -> 0x00, 0 -> 0xBF */
-    uint8_t reg_val = (uint8_t)(0xBF - (volume * 0xBF / 100));
+    /* Direct mapping: 0 -> 0x00 (mute), 100 -> 0xC8 (max) */
+    uint8_t reg_val = (uint8_t)(volume * 0xC8 / 100);
     
     ESP_LOGI(TAG, "Setting volume to %d%% (reg 0x32 = 0x%02X)", volume, reg_val);
     codec_write(0x32, reg_val);
