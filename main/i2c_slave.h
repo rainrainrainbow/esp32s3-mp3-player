@@ -2,7 +2,7 @@
 #define I2C_SLAVE_H
 
 #include <stdint.h>
-#include "driver/i2c.h"
+#include <stdbool.h>
 
 // I2C Slave Address
 #define I2C_SLAVE_ADDR          0x52
@@ -51,6 +51,16 @@ void i2c_slave_set_status(uint8_t status);
  * @brief Update current track number
  */
 void i2c_slave_set_current_track(uint8_t track);
+
+/**
+ * @brief Update volume register (for I2C read)
+ */
+void i2c_slave_set_volume(uint8_t volume);
+
+/**
+ * @brief Update brightness register (for I2C read)
+ */
+void i2c_slave_set_brightness(uint8_t brightness);
 
 /**
  * @brief Get pending track (returns 0 if none)
