@@ -6,6 +6,7 @@ set(COMPONENT_SRCS
     "image_decoder.c"
     "minimp3.c"
     "usb_msc.c"
+    "i2c_slave.c"
 )
 set(COMPONENT_ADD_INCLUDEDIRS ".")
 set(COMPONENT_REQUIRES
