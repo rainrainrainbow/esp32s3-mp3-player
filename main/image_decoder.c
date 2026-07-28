@@ -1,6 +1,6 @@
 /*
- * image_decoder.c - Image decoder with JPG/BMP support and hardware scaling
- * For ESP32-S3 with OPI PSRAM
+ * image_decoder.c - Image decoder with JPG/BMP support and software scaling
+ * For ESP32-S3 with OPI PSRAM (no hardware JPEG decoder)
  */
 
 #include <stdio.h>
@@ -8,12 +8,11 @@
 #include <stdlib.h>
 #include "esp_log.h"
 #include "esp_heap_caps.h"
-#include "jpeg_decoder.h"
+#include "esp_jpeg_decode.h"
 #include "image_decoder.h"
 
 static const char *TAG = "IMG_DEC";
 
-// BMP file header (14 bytes)
 #pragma pack(push, 1)
 typedef struct {
     uint16_t bfType;
@@ -23,7 +22,6 @@ typedef struct {
     uint32_t bfOffBits;
 } bmp_file_header_t;
 
-// BMP info header (40 bytes)
 typedef struct {
     uint32_t biSize;
     int32_t  biWidth;
@@ -56,7 +54,7 @@ image_format_t detect_image_format(const char *filepath)
     return IMG_FMT_UNKNOWN;
 }
 
-// Decode BMP directly to target size using nearest-neighbor (fast, no float math)
+// Decode BMP directly to target size using nearest-neighbor
 static bool decode_bmp(const char *filepath, uint16_t target_w, uint16_t target_h, decoded_image_t *out_image)
 {
     FILE *f = fopen(filepath, "rb");
@@ -74,14 +72,8 @@ static bool decode_bmp(const char *filepath, uint16_t target_w, uint16_t target_
         return false;
     }
 
-    if (file_hdr.bfType != 0x4D42) {
-        ESP_LOGE(TAG, "Not a valid BMP file");
-        fclose(f);
-        return false;
-    }
-
-    if (info_hdr.biBitCount != 24) {
-        ESP_LOGE(TAG, "Only 24-bit BMP supported, got %d-bit", info_hdr.biBitCount);
+    if (file_hdr.bfType != 0x4D42 || info_hdr.biBitCount != 24) {
+        ESP_LOGE(TAG, "Invalid BMP (type=0x%04X, bits=%d)", file_hdr.bfType, info_hdr.biBitCount);
         fclose(f);
         return false;
     }
@@ -92,19 +84,17 @@ static bool decode_bmp(const char *filepath, uint16_t target_w, uint16_t target_
 
     ESP_LOGI(TAG, "BMP: %ldx%ld -> %dx%d", (long)src_w, (long)src_h, target_w, target_h);
 
-    // Read entire pixel data into memory first (avoid per-pixel fseek)
+    // Read entire pixel data into memory
     int row_padding = (4 - ((src_w * 3) % 4)) % 4;
     int row_stride = src_w * 3 + row_padding;
     size_t pixel_data_size = (size_t)row_stride * src_h;
-    
+
     uint8_t *pixel_data = heap_caps_malloc(pixel_data_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!pixel_data) pixel_data = malloc(pixel_data_size);
     if (!pixel_data) {
-        pixel_data = malloc(pixel_data_size);
-        if (!pixel_data) {
-            ESP_LOGE(TAG, "OOM for BMP pixel data (%u bytes)", (unsigned)pixel_data_size);
-            fclose(f);
-            return false;
-        }
+        ESP_LOGE(TAG, "OOM for BMP pixel data");
+        fclose(f);
+        return false;
     }
 
     fseek(f, file_hdr.bfOffBits, SEEK_SET);
@@ -116,19 +106,16 @@ static bool decode_bmp(const char *filepath, uint16_t target_w, uint16_t target_
     }
     fclose(f);
 
-    // Allocate output buffer at target size
+    // Allocate output buffer
     size_t out_count = (size_t)target_w * target_h;
     uint16_t *buf = heap_caps_malloc(out_count * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf) buf = malloc(out_count * sizeof(uint16_t));
     if (!buf) {
-        buf = malloc(out_count * sizeof(uint16_t));
-        if (!buf) {
-            ESP_LOGE(TAG, "OOM for BMP output");
-            free(pixel_data);
-            return false;
-        }
+        free(pixel_data);
+        return false;
     }
 
-    // Nearest-neighbor scaling directly from memory (fast!)
+    // Nearest-neighbor scaling directly from memory
     for (int y = 0; y < target_h; y++) {
         int src_y = y * src_h / target_h;
         int bmp_row = bottom_up ? (src_h - 1 - src_y) : src_y;
@@ -137,7 +124,6 @@ static bool decode_bmp(const char *filepath, uint16_t target_w, uint16_t target_
         for (int x = 0; x < target_w; x++) {
             int src_x = x * src_w / target_w;
             const uint8_t *px = row_ptr + src_x * 3;
-            // BGR -> RGB565
             uint8_t r = px[2] >> 3;
             uint8_t g = px[1] >> 2;
             uint8_t b = px[0] >> 3;
@@ -154,7 +140,7 @@ static bool decode_bmp(const char *filepath, uint16_t target_w, uint16_t target_
     return true;
 }
 
-// Decode JPEG using esp_jpeg hardware decoder with built-in scaling
+// Decode JPEG using esp_jpeg (software decoder), then scale to target
 static bool decode_jpeg(const char *filepath, uint16_t target_w, uint16_t target_h, decoded_image_t *out_image)
 {
     FILE *f = fopen(filepath, "rb");
@@ -173,13 +159,10 @@ static bool decode_jpeg(const char *filepath, uint16_t target_w, uint16_t target
     }
 
     uint8_t *jpeg_data = heap_caps_malloc(file_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!jpeg_data) jpeg_data = malloc(file_size);
     if (!jpeg_data) {
-        jpeg_data = malloc(file_size);
-        if (!jpeg_data) {
-            ESP_LOGE(TAG, "OOM for JPEG data");
-            fclose(f);
-            return false;
-        }
+        fclose(f);
+        return false;
     }
 
     if (fread(jpeg_data, 1, file_size, f) != (size_t)file_size) {
@@ -189,121 +172,58 @@ static bool decode_jpeg(const char *filepath, uint16_t target_w, uint16_t target
     }
     fclose(f);
 
-    // Get original image info
-    esp_jpeg_image_cfg_t cfg = {
-        .indata = jpeg_data,
-        .indata_size = file_size,
-        .outbuf = NULL,
-        .outbuf_size = 0,
-        .out_format = JPEG_IMAGE_FORMAT_RGB565,
-        .out_scale = JPEG_IMAGE_SCALE_0,
-        .flags = {0},
-        .advanced = {
-            .working_buffer = NULL,
-            .working_buffer_size = 0
-        }
+    // Decode JPEG to RGB565 at original size
+    esp_jpeg_decode_cfg_t jpeg_cfg = {
+        .rgb_order = JPEG_RGB_ORDER_RGB,
+        .jpeg_type = JPEG_TYPE_YCBCR,
     };
 
-    esp_jpeg_image_output_t out_info = {0};
-    if (esp_jpeg_get_image_info(&cfg, &out_info) != ESP_OK) {
-        ESP_LOGE(TAG, "esp_jpeg_get_image_info failed");
-        free(jpeg_data);
+    uint8_t *out_buf = NULL;
+    int out_size = 0;
+    int width = 0, height = 0;
+
+    esp_err_t ret = esp_jpeg_decode((uint8_t *)jpeg_data, file_size, &jpeg_cfg,
+                                     &out_buf, &out_size, &width, &height);
+    free(jpeg_data);
+
+    if (ret != ESP_OK || !out_buf) {
+        ESP_LOGE(TAG, "esp_jpeg_decode failed: %s", esp_err_to_name(ret));
         return false;
     }
 
-    int src_w = out_info.width;
-    int src_h = out_info.height;
-    ESP_LOGI(TAG, "JPEG: %dx%d -> %dx%d", src_w, src_h, target_w, target_h);
+    ESP_LOGI(TAG, "JPEG decoded: %dx%d -> scaling to %dx%d", width, height, target_w, target_h);
 
-    // Choose optimal hardware scale factor
-    // esp_jpeg supports: 1:1, 1:2, 1:4, 1:8
-    float scale_ratio_w = (float)target_w / src_w;
-    float scale_ratio_h = (float)target_h / src_h;
-    float scale_ratio = (scale_ratio_w < scale_ratio_h) ? scale_ratio_w : scale_ratio_h;
-
-    jpeg_scale_t scale = JPEG_IMAGE_SCALE_0;
-    int div = 1;
-    if (scale_ratio <= 0.15f) {
-        scale = JPEG_IMAGE_SCALE_1_8; div = 8;
-    } else if (scale_ratio <= 0.3f) {
-        scale = JPEG_IMAGE_SCALE_1_4; div = 4;
-    } else if (scale_ratio <= 0.6f) {
-        scale = JPEG_IMAGE_SCALE_1_2; div = 2;
-    }
-
-    int hw_w = src_w / div;
-    int hw_h = src_h / div;
-
-    ESP_LOGI(TAG, "HW scale 1:%d -> %dx%d", div, hw_w, hw_h);
-
-    // Allocate output buffer at final target size
-    // If HW scale gives exact size, decode directly to output
-    // Otherwise decode to HW-scaled buffer then do fast nearest-neighbor
-    size_t out_size = (size_t)target_w * target_h * 2;
-    uint16_t *out_buf = heap_caps_malloc(out_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!out_buf) {
-        ESP_LOGE(TAG, "OOM for JPEG output");
-        free(jpeg_data);
-        return false;
-    }
-
-    if (hw_w == target_w && hw_h == target_h) {
-        // Perfect match - decode directly to output
-        cfg.outbuf = (uint8_t *)out_buf;
-        cfg.outbuf_size = out_size;
-        cfg.out_scale = scale;
-
-        if (esp_jpeg_decode(&cfg, &out_info) != ESP_OK) {
-            ESP_LOGE(TAG, "esp_jpeg_decode failed");
-            free(out_buf);
-            free(jpeg_data);
-            return false;
-        }
-        free(jpeg_data);
-
-        out_image->pixels = out_buf;
+    // If same size, just return
+    if (width == target_w && height == target_h) {
+        out_image->pixels = (uint16_t *)out_buf;
         out_image->width = target_w;
         out_image->height = target_h;
         out_image->format = IMG_FMT_JPEG;
         return true;
     }
 
-    // Decode to intermediate HW-scaled buffer
-    size_t hw_size = (size_t)hw_w * hw_h * 2;
-    uint16_t *hw_buf = heap_caps_malloc(hw_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!hw_buf) {
-        ESP_LOGE(TAG, "OOM for JPEG HW buffer");
+    // Allocate target buffer
+    size_t target_size = (size_t)target_w * target_h * 2;
+    uint16_t *target_buf = heap_caps_malloc(target_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!target_buf) target_buf = malloc(target_size);
+    if (!target_buf) {
         free(out_buf);
-        free(jpeg_data);
         return false;
     }
 
-    cfg.outbuf = (uint8_t *)hw_buf;
-    cfg.outbuf_size = hw_size;
-    cfg.out_scale = scale;
-
-    if (esp_jpeg_decode(&cfg, &out_info) != ESP_OK) {
-        ESP_LOGE(TAG, "esp_jpeg_decode failed");
-        free(hw_buf);
-        free(out_buf);
-        free(jpeg_data);
-        return false;
-    }
-    free(jpeg_data);
-
-    // Fast nearest-neighbor from HW-scaled to target (integer math only)
-    ESP_LOGI(TAG, "SW scale %dx%d -> %dx%d", hw_w, hw_h, target_w, target_h);
+    // Nearest-neighbor scale from decoded to target
+    const uint16_t *src = (const uint16_t *)out_buf;
     for (int y = 0; y < target_h; y++) {
-        int src_y = y * hw_h / target_h;
+        int src_y = y * height / target_h;
         for (int x = 0; x < target_w; x++) {
-            int src_x = x * hw_w / target_w;
-            out_buf[y * target_w + x] = hw_buf[src_y * hw_w + src_x];
+            int src_x = x * width / target_w;
+            target_buf[y * target_w + x] = src[src_y * width + src_x];
         }
     }
 
-    free(hw_buf);
+    free(out_buf);
 
-    out_image->pixels = out_buf;
+    out_image->pixels = target_buf;
     out_image->width = target_w;
     out_image->height = target_h;
     out_image->format = IMG_FMT_JPEG;
