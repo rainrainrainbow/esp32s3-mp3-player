@@ -278,3 +278,33 @@ void tft_show_welcome(void)
     if (!tft_initialized) return;
     tft_fill_screen(0x001F);  // Blue
 }
+
+void tft_show_rgb565(const uint16_t *pixels, uint16_t width, uint16_t height)
+{
+    if (!tft_initialized || !dma_buffer || !pixels) return;
+    if (width == 0 || height == 0) return;
+
+    tft_set_addr_window(0, 0, width - 1, height - 1);
+
+    size_t total = (size_t)width * height;
+    const uint16_t *src = pixels;
+    gpio_set_level(DISPLAY_DC_GPIO, 1);
+
+    while (total > 0) {
+        size_t chunk = (total > DMA_BUFFER_SIZE) ? DMA_BUFFER_SIZE : total;
+
+        // Byte-swap into DMA buffer for SPI big-endian
+        for (size_t i = 0; i < chunk; i++) {
+            dma_buffer[i] = ((src[i] >> 8) & 0xFF) | ((src[i] & 0xFF) << 8);
+        }
+
+        spi_transaction_t t = {
+            .length = chunk * 16,
+            .tx_buffer = dma_buffer,
+        };
+        spi_device_transmit(spi_dev, &t);
+
+        src += chunk;
+        total -= chunk;
+    }
+}
