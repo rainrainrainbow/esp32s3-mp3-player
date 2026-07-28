@@ -512,7 +512,7 @@ void app_main(void)
     xTaskCreatePinnedToCore(slideshow_task, "slideshow", 8192, NULL, 1, NULL, 1);
 
     // Button task
-    xTaskCreatePinnedToCore(button_task, "buttons", 3072, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(button_task, "buttons", 16384, NULL, 5, NULL, 1);
 
     ESP_LOGI(TAG, "System ready");
     ESP_LOGI(TAG, "GPIO0 short=Prev, long 3s=USB");
