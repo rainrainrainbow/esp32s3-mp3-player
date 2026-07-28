@@ -290,14 +290,6 @@ static void display_settings_menu(void)
     }
 }
 
-/* Display track info */
-static void display_track_info(uint8_t track)
-{
-    char info[64];
-    snprintf(info, sizeof(info), "Track %d", track);
-    draw_string(80, 20, info, 0xFFFF);
-}
-
 #define FILE_LIST_MAX_DEPTH 6
 
 static void list_flash_tree(const char *path, int depth)
@@ -411,7 +403,7 @@ static void slideshow_task(void *param)
                 
                 // Update I2C status
                 i2c_slave_set_current_track(track);
-                i2c_slave_set_status(I2C_STATUS_PLAYING);
+                i2c_slave_set_status(STATUS_PLAYING);
             }
 
             if (img_count > 0) {
@@ -422,7 +414,7 @@ static void slideshow_task(void *param)
         } else {
             display_stop();
             prev_track = 0;
-            i2c_slave_set_status(I2C_STATUS_STOPPED);
+            i2c_slave_set_status(STATUS_STOPPED);
         }
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
