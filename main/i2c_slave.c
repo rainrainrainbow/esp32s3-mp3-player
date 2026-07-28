@@ -1,96 +1,124 @@
-/*
- * i2c_slave.c - I2C slave device at address 0x52 (IDF v4.4 compatible)
- * Registers:
- *   0x01: Play track (write) - select track 1-255
- *   0x02: Play status (read) - 0=stopped, 1=playing, 2=paused
- *
- * Uses polling-based i2c_slave_read_buffer() instead of callbacks
- * (IDF v4.4 does not have i2c_slave_register_event_callbacks)
- */
-
-#include <string.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_log.h"
-#include "driver/i2c.h"
-#include "config.h"
 #include "i2c_slave.h"
-#include "audio_player.h"
+#include "config.h"
+#include "esp_log.h"
+#include <string.h>
 
 static const char *TAG = "I2C_SLAVE";
 
-// Internal register storage
-static uint8_t regs[256] = {0};
+// Register storage
+static volatile uint8_t reg_play_status = STATUS_STOPPED;
+static volatile uint8_t reg_current_track = 0;
+static volatile uint8_t reg_volume = 50;
+static volatile uint8_t reg_brightness = 75;
 
-// I2C slave polling task handle
-static TaskHandle_t i2c_slave_task_handle = NULL;
+// Pending commands
+static volatile uint8_t pending_track = 0;
+static volatile bool stop_requested = false;
 
-// Register address that master last wrote (for combined transactions)
+// Callbacks
+static i2c_play_track_cb_t play_callback = NULL;
+static i2c_stop_cb_t stop_callback = NULL;
+static i2c_volume_cb_t volume_callback = NULL;
+static i2c_brightness_cb_t brightness_callback = NULL;
+
+// I2C port
+#define I2C_SLAVE_PORT I2C_NUM_0
+
+// Read buffer for register addressing
 static uint8_t last_reg_addr = 0;
-static bool last_reg_addr_valid = false;
 
-// Buffer for slave to send back to master
-static uint8_t tx_buffer[256];
-
-static void i2c_slave_polling_task(void *arg)
+/**
+ * @brief I2C slave event handler
+ */
+static void i2c_slave_event_handler(void *arg)
 {
-    uint8_t rx_buf[64];
-    ESP_LOGI(TAG, "I2C slave polling task started");
-
-    while (1) {
-        // Blocking read from I2C master (master writing to us)
-        size_t len = i2c_slave_read_buffer(I2C_SLAVE_PORT, rx_buf, sizeof(rx_buf), portMAX_DELAY);
-
-        if (len > 0) {
-            if (len == 1) {
-                // Single byte received
-                if (last_reg_addr_valid) {
-                    // This is data for the previously set register
-                    regs[last_reg_addr & 0xFF] = rx_buf[0];
-                    ESP_LOGD(TAG, "Write reg 0x%02X = 0x%02X", last_reg_addr, rx_buf[0]);
-
-                    if (last_reg_addr == REG_PLAY_TRACK && rx_buf[0] > 0) {
-                        ESP_LOGI(TAG, "Play track: %d", rx_buf[0]);
-                        audio_player_play_track(rx_buf[0]);
+    i2c_slave_evt_t *event = (i2c_slave_evt_t *)arg;
+    
+    switch (event->info.event) {
+        case I2C_SLAVE_EVT_RXFIFO: {
+            // Data received from master
+            int data_len = event->info.data_len;
+            uint8_t data[32];
+            
+            int read_len = i2c_slave_read_buffer(I2C_SLAVE_PORT, data, data_len, 10);
+            if (read_len > 0) {
+                // First byte is register address
+                last_reg_addr = data[0];
+                
+                // Process write commands (register + value)
+                if (read_len >= 2) {
+                    uint8_t reg = data[0];
+                    uint8_t val = data[1];
+                    
+                    switch (reg) {
+                        case REG_PLAY_TRACK:
+                            if (val >= 1 && val <= 255) {
+                                ESP_LOGI(TAG, "I2C: Play track %d", val);
+                                pending_track = val;
+                                if (play_callback) play_callback(val);
+                            }
+                            break;
+                            
+                        case REG_PLAY_STATUS:
+                            if (val == STATUS_STOPPED) {
+                                ESP_LOGI(TAG, "I2C: Stop requested");
+                                stop_requested = true;
+                                if (stop_callback) stop_callback();
+                            }
+                            break;
+                            
+                        case REG_VOLUME:
+                            if (val <= 100) {
+                                ESP_LOGI(TAG, "I2C: Volume = %d", val);
+                                reg_volume = val;
+                                if (volume_callback) volume_callback(val);
+                            }
+                            break;
+                            
+                        case REG_BRIGHTNESS:
+                            if (val <= 100) {
+                                ESP_LOGI(TAG, "I2C: Brightness = %d", val);
+                                reg_brightness = val;
+                                if (brightness_callback) brightness_callback(val);
+                            }
+                            break;
                     }
-                    last_reg_addr_valid = false;
-                } else {
-                    // First byte is a register address (for future read or write)
-                    last_reg_addr = rx_buf[0];
-                    last_reg_addr_valid = true;
-                    ESP_LOGD(TAG, "Set reg addr: 0x%02X", last_reg_addr);
-
-                    // Pre-load TX buffer with register value for upcoming master read
-                    tx_buffer[0] = regs[last_reg_addr & 0xFF];
-                    i2c_slave_write_buffer(I2C_SLAVE_PORT, tx_buffer, 1, 100 / portTICK_PERIOD_MS);
                 }
-            } else if (len >= 2) {
-                // Multi-byte: first byte is register address, rest are data
-                last_reg_addr = rx_buf[0];
-                for (size_t i = 1; i < len; i++) {
-                    regs[(last_reg_addr + i - 1) & 0xFF] = rx_buf[i];
-                }
-                ESP_LOGD(TAG, "Write reg 0x%02X = 0x%02X (multi)", last_reg_addr, rx_buf[1]);
-
-                if (rx_buf[0] == REG_PLAY_TRACK && rx_buf[1] > 0) {
-                    ESP_LOGI(TAG, "Play track: %d", rx_buf[1]);
-                    audio_player_play_track(rx_buf[1]);
-                }
-                last_reg_addr_valid = false;
             }
+            break;
         }
+        
+        case I2C_SLAVE_EVT_TXFIFO:
+            // Master requesting data (read operation)
+            // Send data based on last register address
+            switch (last_reg_addr) {
+                case REG_PLAY_STATUS:
+                    i2c_slave_write_buffer(I2C_SLAVE_PORT, &reg_play_status, 1, 10);
+                    break;
+                case REG_CURRENT_TRACK:
+                    i2c_slave_write_buffer(I2C_SLAVE_PORT, &reg_current_track, 1, 10);
+                    break;
+                case REG_VOLUME:
+                    i2c_slave_write_buffer(I2C_SLAVE_PORT, &reg_volume, 1, 10);
+                    break;
+                case REG_BRIGHTNESS:
+                    i2c_slave_write_buffer(I2C_SLAVE_PORT, &reg_brightness, 1, 10);
+                    break;
+                default:
+                    i2c_slave_write_buffer(I2C_SLAVE_PORT, &reg_play_status, 1, 10);
+                    break;
+            }
+            break;
+            
+        default:
+            break;
     }
 }
 
 void i2c_slave_init(void)
 {
-    ESP_LOGI(TAG, "Initializing I2C slave at addr 0x%02X", I2C_SLAVE_ADDR);
-
-    // Initialize register with defaults
-    memset(regs, 0, sizeof(regs));
-    regs[REG_PLAY_STATUS] = PLAYER_STATE_STOPPED;
-
-    // Configure I2C slave
+    ESP_LOGI(TAG, "Initializing I2C slave at address 0x%02X", I2C_SLAVE_ADDR);
+    
     i2c_config_t conf = {
         .mode = I2C_MODE_SLAVE,
         .sda_io_num = I2C_SLAVE_SDA,
@@ -99,33 +127,60 @@ void i2c_slave_init(void)
         .scl_pullup_en = GPIO_PULLUP_ENABLE,
         .slave.addr_10bit_en = 0,
         .slave.slave_addr = I2C_SLAVE_ADDR,
-        .slave.maximum_speed = 100000,
+        .clk_flags = 0,
     };
-    ESP_ERROR_CHECK(i2c_param_config(I2C_SLAVE_PORT, &conf));
-
-    // Install I2C slave driver
-    ESP_ERROR_CHECK(i2c_driver_install(I2C_SLAVE_PORT, I2C_MODE_SLAVE,
-                                       256,    // RX buffer
-                                       256,    // TX buffer
-                                       0));
-
-    // Create polling task to handle I2C slave reads
-    xTaskCreatePinnedToCore(i2c_slave_polling_task, "i2c_slave", 4096, NULL, 10, &i2c_slave_task_handle, 1);
-
-    ESP_LOGI(TAG, "I2C slave initialized");
-}
-
-uint8_t i2c_slave_read_reg(uint8_t reg)
-{
-    return regs[reg & 0xFF];
-}
-
-void i2c_slave_write_reg(uint8_t reg, uint8_t val)
-{
-    regs[reg & 0xFF] = val;
-    // Update TX buffer for pending master reads
-    if (last_reg_addr_valid && last_reg_addr == (reg & 0xFF)) {
-        tx_buffer[0] = val;
-        i2c_slave_write_buffer(I2C_SLAVE_PORT, tx_buffer, 1, 100 / portTICK_PERIOD_MS);
+    
+    esp_err_t ret = i2c_param_config(I2C_SLAVE_PORT, &conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "I2C config failed: %s", esp_err_to_name(ret));
+        return;
     }
+    
+    ret = i2c_driver_install(I2C_SLAVE_PORT, conf.mode, 1024, 1024, NULL, 0);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "I2C driver install failed: %s", esp_err_to_name(ret));
+        return;
+    }
+    
+    // Register event handler
+    i2c_isr_register(I2C_SLAVE_PORT, i2c_slave_event_handler, NULL, 0, NULL);
+    
+    ESP_LOGI(TAG, "I2C slave initialized: SDA=%d, SCL=%d", I2C_SLAVE_SDA, I2C_SLAVE_SCL);
+}
+
+void i2c_slave_set_callbacks(
+    i2c_play_track_cb_t play_cb,
+    i2c_stop_cb_t stop_cb,
+    i2c_volume_cb_t volume_cb,
+    i2c_brightness_cb_t brightness_cb)
+{
+    play_callback = play_cb;
+    stop_callback = stop_cb;
+    volume_callback = volume_cb;
+    brightness_callback = brightness_cb;
+}
+
+void i2c_slave_set_status(uint8_t status)
+{
+    reg_play_status = status;
+}
+
+void i2c_slave_set_current_track(uint8_t track)
+{
+    reg_current_track = track;
+}
+
+uint8_t i2c_slave_get_pending_track(void)
+{
+    return pending_track;
+}
+
+bool i2c_slave_get_stop_requested(void)
+{
+    return stop_requested;
+}
+
+void i2c_slave_clear_stop_request(void)
+{
+    stop_requested = false;
 }
