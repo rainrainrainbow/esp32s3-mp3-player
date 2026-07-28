@@ -1,13 +1,12 @@
 /*
- * main.c - ESP32-S3 MP3 Player (minimal-player branch)
- *
- * Hardware: ESP32-S3 N16R8, OPI PSRAM, ES8311, 240x320 TFT
- *
+ * ESP32-S3 MP3 Player with I2C Slave Control
+ * 
  * Features:
- * - MP3 playback from SPI flash FATFS via ES8311
- * - TFT image display (BMP/JPG slideshow, synced with track)
- * - GPIO0 = Prev track, GPIO43 = Next track
- * - Long press GPIO43 (2s) = Settings menu
+ * - MP3 playback from SPI flash
+ * - TFT display with image slideshow
+ * - I2C slave control (address 0x52)
+ * - USB MSC for file transfer
+ * - Settings menu with volume/brightness control
  */
 
 #include <stdio.h>
@@ -16,8 +15,6 @@
 #include <dirent.h>
 #include <errno.h>
 #include <sys/stat.h>
-#include <math.h>
-#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -30,6 +27,7 @@
 #include "fatfs_manager.h"
 #include "usb_msc.h"
 #include "image_decoder.h"
+#include "i2c_slave.h"
 
 static const char *TAG = "MAIN";
 
@@ -89,12 +87,14 @@ static void save_settings(void)
 static void apply_volume(void)
 {
     audio_player_set_volume(g_volume);
+    i2c_slave_set_volume(g_volume);
 }
 
 /* Apply brightness setting to display */
 static void apply_brightness(void)
 {
     tft_set_brightness(g_brightness);
+    i2c_slave_set_brightness(g_brightness);
 }
 
 /* 5x7 pixel font bitmap for basic characters */
@@ -290,6 +290,14 @@ static void display_settings_menu(void)
     }
 }
 
+/* Display track info */
+static void display_track_info(uint8_t track)
+{
+    char info[64];
+    snprintf(info, sizeof(info), "Track %d", track);
+    draw_string(80, 20, info, 0xFFFF);
+}
+
 #define FILE_LIST_MAX_DEPTH 6
 
 static void list_flash_tree(const char *path, int depth)
@@ -400,6 +408,10 @@ static void slideshow_task(void *param)
                     closedir(dir);
                     ESP_LOGI(TAG, "Track %d: %d images", track, img_count);
                 }
+                
+                // Update I2C status
+                i2c_slave_set_current_track(track);
+                i2c_slave_set_status(I2C_STATUS_PLAYING);
             }
 
             if (img_count > 0) {
@@ -410,9 +422,39 @@ static void slideshow_task(void *param)
         } else {
             display_stop();
             prev_track = 0;
+            i2c_slave_set_status(I2C_STATUS_STOPPED);
         }
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
+}
+
+/* I2C control callbacks */
+static void i2c_play_track_callback(uint8_t track)
+{
+    ESP_LOGI(TAG, "I2C: Play track %d", track);
+    audio_player_play_track(track);
+}
+
+static void i2c_stop_callback(void)
+{
+    ESP_LOGI(TAG, "I2C: Stop playback");
+    audio_player_stop();
+}
+
+static void i2c_volume_callback(uint8_t volume)
+{
+    ESP_LOGI(TAG, "I2C: Set volume %d", volume);
+    g_volume = volume;
+    apply_volume();
+    save_settings();
+}
+
+static void i2c_brightness_callback(uint8_t brightness)
+{
+    ESP_LOGI(TAG, "I2C: Set brightness %d", brightness);
+    g_brightness = brightness;
+    apply_brightness();
+    save_settings();
 }
 
 /* Button task with settings menu support */
@@ -593,14 +635,27 @@ void app_main(void)
     tft_init();
     
     // Show welcome screen
-    tft_show_welcome();
-    vTaskDelay(pdMS_TO_TICKS(2000)); // Show for 2 seconds
+    tft_fill_screen(0x001F);  // Blue background
+    draw_string(60, 100, "MP3 Player", 0xFFFF);
+    draw_string(40, 140, "Initializing...", 0x07FF);
+    vTaskDelay(pdMS_TO_TICKS(1000));
     
     apply_brightness();
 
     // Initialize audio
     audio_player_init();
     apply_volume();
+
+    // Initialize I2C slave
+    i2c_slave_init();
+    i2c_slave_set_callbacks(
+        i2c_play_track_callback,
+        i2c_stop_callback,
+        i2c_volume_callback,
+        i2c_brightness_callback
+    );
+    i2c_slave_set_volume(g_volume);
+    i2c_slave_set_brightness(g_brightness);
 
     // Initialize USB (CDC ACM + MSC) - also mounts FATFS
     usb_msc_init();
@@ -641,5 +696,6 @@ void app_main(void)
     ESP_LOGI(TAG, "System ready");
     ESP_LOGI(TAG, "GPIO0 short=Prev, long 3s=APP/USB storage owner");
     ESP_LOGI(TAG, "GPIO43 short=Next, long 2s=Settings menu");
+    ESP_LOGI(TAG, "I2C Slave: 0x%02X", I2C_SLAVE_ADDR);
     ESP_LOGI(TAG, "Settings: volume=%d%%, brightness=%d%%", g_volume, g_brightness);
 }
