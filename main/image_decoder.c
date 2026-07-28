@@ -140,7 +140,7 @@ static bool decode_bmp(const char *filepath, uint16_t target_w, uint16_t target_
     return true;
 }
 
-// Decode JPEG using esp_jpeg (software decoder), then scale to target
+// Decode JPEG using esp_jpeg v1.3.1 (software decoder), then nearest-neighbor scale to target
 static bool decode_jpeg(const char *filepath, uint16_t target_w, uint16_t target_h, decoded_image_t *out_image)
 {
     FILE *f = fopen(filepath, "rb");
@@ -173,29 +173,60 @@ static bool decode_jpeg(const char *filepath, uint16_t target_w, uint16_t target
     fclose(f);
 
     // Decode JPEG to RGB565 at original size
-    esp_jpeg_decode_cfg_t jpeg_cfg = {
-        .rgb_order = JPEG_RGB_ORDER_RGB,
-        .jpeg_type = JPEG_TYPE_YCBCR,
+    // esp_jpeg v1.3.1 API: esp_jpeg_decode(esp_jpeg_image_cfg_t *cfg, esp_jpeg_image_output_t *img)
+    esp_jpeg_image_cfg_t cfg = {
+        .indata = jpeg_data,
+        .indata_size = (uint32_t)file_size,
+        .outbuf = NULL,      // Will be set after we know required size
+        .outbuf_size = 0,    // Will be set after we know required size
+        .out_format = JPEG_IMAGE_FORMAT_RGB565,
+        .out_scale = JPEG_IMAGE_SCALE_0,
+        .flags = {0},
+        .advanced = {
+            .working_buffer = NULL,
+            .working_buffer_size = 0
+        }
     };
 
-    uint8_t *out_buf = NULL;
-    int out_size = 0;
-    int width = 0, height = 0;
+    esp_jpeg_image_output_t out_info = {0};
 
-    esp_err_t ret = esp_jpeg_decode((uint8_t *)jpeg_data, file_size, &jpeg_cfg,
-                                     &out_buf, &out_size, &width, &height);
-    free(jpeg_data);
-
-    if (ret != ESP_OK || !out_buf) {
-        ESP_LOGE(TAG, "esp_jpeg_decode failed: %s", esp_err_to_name(ret));
+    // First call: get output size (outbuf=NULL)
+    esp_err_t ret = esp_jpeg_decode(&cfg, &out_info);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_jpeg_decode (info) failed: %s", esp_err_to_name(ret));
+        free(jpeg_data);
         return false;
     }
 
-    ESP_LOGI(TAG, "JPEG decoded: %dx%d -> scaling to %dx%d", width, height, target_w, target_h);
+    int src_w = out_info.width;
+    int src_h = out_info.height;
+    ESP_LOGI(TAG, "JPEG: %dx%d -> %dx%d", src_w, src_h, target_w, target_h);
+
+    // Allocate output buffer for full-size decode
+    size_t full_size = (size_t)src_w * src_h * 2;
+    uint16_t *full_buf = heap_caps_malloc(full_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!full_buf) full_buf = malloc(full_size);
+    if (!full_buf) {
+        free(jpeg_data);
+        return false;
+    }
+
+    // Second call: actual decode with output buffer
+    cfg.outbuf = (uint8_t *)full_buf;
+    cfg.outbuf_size = (uint32_t)full_size;
+    ret = esp_jpeg_decode(&cfg, &out_info);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_jpeg_decode (decode) failed: %s", esp_err_to_name(ret));
+        free(full_buf);
+        free(jpeg_data);
+        return false;
+    }
+
+    free(jpeg_data);
 
     // If same size, just return
-    if (width == target_w && height == target_h) {
-        out_image->pixels = (uint16_t *)out_buf;
+    if (src_w == target_w && src_h == target_h) {
+        out_image->pixels = full_buf;
         out_image->width = target_w;
         out_image->height = target_h;
         out_image->format = IMG_FMT_JPEG;
@@ -203,25 +234,24 @@ static bool decode_jpeg(const char *filepath, uint16_t target_w, uint16_t target
     }
 
     // Allocate target buffer
-    size_t target_size = (size_t)target_w * target_h * 2;
+    size_t target_size = (size_t)target_w * target_h * sizeof(uint16_t);
     uint16_t *target_buf = heap_caps_malloc(target_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!target_buf) target_buf = malloc(target_size);
     if (!target_buf) {
-        free(out_buf);
+        free(full_buf);
         return false;
     }
 
     // Nearest-neighbor scale from decoded to target
-    const uint16_t *src = (const uint16_t *)out_buf;
     for (int y = 0; y < target_h; y++) {
-        int src_y = y * height / target_h;
+        int src_y = y * src_h / target_h;
         for (int x = 0; x < target_w; x++) {
-            int src_x = x * width / target_w;
-            target_buf[y * target_w + x] = src[src_y * width + src_x];
+            int src_x = x * src_w / target_w;
+            target_buf[y * target_w + x] = full_buf[src_y * src_w + src_x];
         }
     }
 
-    free(out_buf);
+    free(full_buf);
 
     out_image->pixels = target_buf;
     out_image->width = target_w;
