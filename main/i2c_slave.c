@@ -52,7 +52,7 @@ static void i2c_slave_task(void *arg)
                 
                 switch (reg) {
                     case REG_PLAY_TRACK:
-                        if (val >= 1 && val <= 255) {
+                        if (val >= 1) {
                             ESP_LOGI(TAG, "I2C: Play track %d", val);
                             pending_track = val;
                             if (play_callback) play_callback(val);
