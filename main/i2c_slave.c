@@ -2,6 +2,7 @@
 #include "config.h"
 #include "esp_log.h"
 #include <string.h>
+#include "driver/i2c.h"
 
 static const char *TAG = "I2C_SLAVE";
 
@@ -168,6 +169,16 @@ void i2c_slave_set_status(uint8_t status)
 void i2c_slave_set_current_track(uint8_t track)
 {
     reg_current_track = track;
+}
+
+void i2c_slave_set_volume(uint8_t volume)
+{
+    reg_volume = volume;
+}
+
+void i2c_slave_set_brightness(uint8_t brightness)
+{
+    reg_brightness = brightness;
 }
 
 uint8_t i2c_slave_get_pending_track(void)
