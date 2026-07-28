@@ -3,7 +3,7 @@
  * 
  * Features:
  * - MP3 playback from SPI flash
- * - TFT display with image slideshow
+ * - TFT display with image slideshow (preloaded)
  * - I2C slave control (address 0x52)
  * - USB MSC for file transfer
  * - Settings menu with volume/brightness control
@@ -44,6 +44,12 @@ typedef enum {
 } menu_state_t;
 
 static menu_state_t g_menu_state = MENU_NONE;
+
+// Image preload cache
+#define MAX_PRELOAD_IMAGES 16
+static decoded_image_t g_image_cache[MAX_PRELOAD_IMAGES];
+static int g_image_cache_count = 0;
+static uint8_t g_cached_track = 0;
 
 /* Check if filename has an image extension (BMP or JPG) */
 static bool is_image_file(const char *name)
@@ -223,7 +229,6 @@ static void draw_string(uint16_t x, uint16_t y, const char *str, uint16_t color)
 /* Draw a progress bar */
 static void draw_progress_bar(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t percent, uint16_t color)
 {
-    // Draw border
     for (uint16_t i = 0; i < w; i++) {
         tft_draw_pixel(x + i, y, color);
         tft_draw_pixel(x + i, y + h - 1, color);
@@ -232,7 +237,6 @@ static void draw_progress_bar(uint16_t x, uint16_t y, uint16_t w, uint16_t h, ui
         tft_draw_pixel(x, y + i, color);
         tft_draw_pixel(x + w - 1, y + i, color);
     }
-    // Draw fill
     uint16_t fill_w = (w - 2) * percent / 100;
     for (uint16_t i = 0; i < fill_w; i++) {
         for (uint16_t j = 1; j < h - 1; j++) {
@@ -354,20 +358,74 @@ static uint8_t scan_mp3_tracks(void)
     return count;
 }
 
-/* Slideshow task - shows images from images/<track>/ while playing */
+/* Clear image cache */
+static void clear_image_cache(void)
+{
+    for (int i = 0; i < g_image_cache_count; i++) {
+        if (g_image_cache[i].pixels) {
+            free(g_image_cache[i].pixels);
+            g_image_cache[i].pixels = NULL;
+        }
+    }
+    g_image_cache_count = 0;
+    g_cached_track = 0;
+}
+
+/* Preload all images for a track into cache */
+static void preload_images_for_track(uint8_t track)
+{
+    if (track == g_cached_track && g_image_cache_count > 0) {
+        return; // Already cached
+    }
+
+    // Clear old cache
+    clear_image_cache();
+
+    char track_dir[64];
+    snprintf(track_dir, sizeof(track_dir), "%s/%d", IMAGE_DIR, track);
+    
+    DIR *dir = opendir(track_dir);
+    if (!dir) {
+        ESP_LOGW(TAG, "No image directory: %s", track_dir);
+        return;
+    }
+
+    ESP_LOGI(TAG, "Preloading images from %s...", track_dir);
+    int64_t start_ms = esp_timer_get_time() / 1000;
+
+    // Collect image file paths
+    char paths[MAX_PRELOAD_IMAGES][384];
+    int path_count = 0;
+    
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL && path_count < MAX_PRELOAD_IMAGES) {
+        if (is_image_file(entry->d_name)) {
+            snprintf(paths[path_count], sizeof(paths[0]), "%s/%s", track_dir, entry->d_name);
+            path_count++;
+        }
+    }
+    closedir(dir);
+
+    // Decode each image
+    for (int i = 0; i < path_count; i++) {
+        ESP_LOGI(TAG, "  Decoding %d/%d: %s", i + 1, path_count, paths[i]);
+        if (decode_image_file(paths[i], DISPLAY_WIDTH, DISPLAY_HEIGHT, &g_image_cache[g_image_cache_count])) {
+            g_image_cache_count++;
+        } else {
+            ESP_LOGW(TAG, "  Failed to decode: %s", paths[i]);
+        }
+    }
+
+    int64_t elapsed_ms = esp_timer_get_time() / 1000 - start_ms;
+    ESP_LOGI(TAG, "Preload complete: %d images in %lld ms", g_image_cache_count, elapsed_ms);
+    g_cached_track = track;
+}
+
+/* Slideshow task - uses preloaded image cache */
 static void slideshow_task(void *param)
 {
     uint8_t prev_track = 0;
-    char (*image_paths)[384] = heap_caps_calloc(64, sizeof(*image_paths),
-                                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!image_paths) image_paths = calloc(64, sizeof(*image_paths));
-    if (!image_paths) {
-        ESP_LOGE(TAG, "Unable to allocate slideshow path table");
-        vTaskDelete(NULL);
-        return;
-    }
-    uint8_t img_count = 0;
-    uint8_t img_index = 0;
+    int img_index = 0;
 
     while (1) {
         // Skip slideshow if in menu mode
@@ -381,35 +439,23 @@ static void slideshow_task(void *param)
 
             if (track != prev_track) {
                 prev_track = track;
-                img_count = 0;
                 img_index = 0;
 
-                char track_dir[64];
-                snprintf(track_dir, sizeof(track_dir), "%s/%d", IMAGE_DIR, track);
-                DIR *dir = opendir(track_dir);
-                if (dir) {
-                    struct dirent *entry;
-                    while ((entry = readdir(dir)) != NULL && img_count < 64) {
-                        if (is_image_file(entry->d_name)) {
-                            strlcpy(image_paths[img_count], track_dir, sizeof(image_paths[0]));
-                            strlcat(image_paths[img_count], "/", sizeof(image_paths[0]));
-                            strlcat(image_paths[img_count], entry->d_name, sizeof(image_paths[0]));
-                            img_count++;
-                        }
-                    }
-                    closedir(dir);
-                    ESP_LOGI(TAG, "Track %d: %d images", track, img_count);
-                }
+                // Preload all images for this track
+                preload_images_for_track(track);
                 
                 // Update I2C status
                 i2c_slave_set_current_track(track);
                 i2c_slave_set_status(STATUS_PLAYING);
             }
 
-            if (img_count > 0) {
-                ESP_LOGI(TAG, "Image %d/%d: %s", img_index + 1, img_count, image_paths[img_index]);
-                tft_show_image_file(image_paths[img_index]);
-                img_index = (img_index + 1) % img_count;
+            // Display from cache (instant!)
+            if (g_image_cache_count > 0) {
+                decoded_image_t *img = &g_image_cache[img_index];
+                if (img->pixels) {
+                    tft_show_rgb565(img->pixels, img->width, img->height);
+                }
+                img_index = (img_index + 1) % g_image_cache_count;
             }
         } else {
             display_stop();
@@ -478,16 +524,13 @@ static void button_task(void *param)
             // Handle menu navigation
             if (g_menu_state != MENU_NONE) {
                 if (g_menu_state == MENU_MAIN) {
-                    // Exit menu
                     g_menu_state = MENU_NONE;
                     display_stop();
                 } else if (g_menu_state == MENU_VOLUME) {
                     if (long_press) {
-                        // Back to main menu
                         g_menu_state = MENU_MAIN;
                         display_settings_menu();
                     } else {
-                        // Decrease volume
                         if (g_volume >= 10) g_volume -= 10;
                         else g_volume = 0;
                         apply_volume();
@@ -496,11 +539,9 @@ static void button_task(void *param)
                     }
                 } else if (g_menu_state == MENU_BRIGHTNESS) {
                     if (long_press) {
-                        // Back to main menu
                         g_menu_state = MENU_MAIN;
                         display_settings_menu();
                     } else {
-                        // Decrease brightness
                         if (g_brightness >= 10) g_brightness -= 10;
                         else g_brightness = 0;
                         apply_brightness();
@@ -560,18 +601,15 @@ static void button_task(void *param)
             // Handle menu navigation
             if (g_menu_state != MENU_NONE) {
                 if (g_menu_state == MENU_MAIN) {
-                    // Enter volume menu
                     g_menu_state = MENU_VOLUME;
                     display_settings_menu();
                 } else if (g_menu_state == MENU_VOLUME) {
-                    // Increase volume
                     if (g_volume <= 90) g_volume += 10;
                     else g_volume = 100;
                     apply_volume();
                     save_settings();
                     display_settings_menu();
                 } else if (g_menu_state == MENU_BRIGHTNESS) {
-                    // Increase brightness
                     if (g_brightness <= 90) g_brightness += 10;
                     else g_brightness = 100;
                     apply_brightness();
@@ -583,7 +621,6 @@ static void button_task(void *param)
             }
 
             if (long_press) {
-                // Long press GPIO43 = enter settings menu
                 ESP_LOGI(TAG, "GPIO43 long press: entering settings menu");
                 audio_player_stop();
                 g_menu_state = MENU_MAIN;
@@ -627,7 +664,7 @@ void app_main(void)
     tft_init();
     
     // Show welcome screen
-    tft_fill_screen(0x001F);  // Blue background
+    tft_fill_screen(0x001F);
     draw_string(60, 100, "MP3 Player", 0xFFFF);
     draw_string(40, 140, "Initializing...", 0x07FF);
     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -649,11 +686,11 @@ void app_main(void)
     i2c_slave_set_volume(g_volume);
     i2c_slave_set_brightness(g_brightness);
 
-    // Initialize USB (CDC ACM + MSC) - also mounts FATFS
+    // Initialize USB (CDC ACM + MSC)
     usb_msc_init();
     vTaskDelay(pdMS_TO_TICKS(200));
 
-    // Create default directories after FS is mounted
+    // Create default directories
     mkdir(MUSIC_DIR, 0777);
     mkdir(IMAGE_DIR, 0777);
 
