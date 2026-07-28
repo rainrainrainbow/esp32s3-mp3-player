@@ -11,6 +11,9 @@ void tft_draw_pixel(uint16_t x, uint16_t y, uint16_t color);
 void tft_show_image_file(const char *filepath);
 void tft_show_welcome(void);
 
+// Display pre-decoded RGB565 pixel buffer (byte-swaps and sends via SPI DMA)
+void tft_show_rgb565(const uint16_t *pixels, uint16_t width, uint16_t height);
+
 // Backlight control with PWM-like levels (0-100)
 void tft_set_brightness(uint8_t percent);
 
