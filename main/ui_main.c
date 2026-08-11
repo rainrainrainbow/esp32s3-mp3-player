@@ -66,6 +66,9 @@ static ui_state_t prev_state = UI_STATE_MENU;
 /* Settings focus: 0=volume, 1=brightness */
 static uint8_t settings_focus = 0;
 
+/* Forward declarations */
+static void update_menu_focus(void);
+
 /* ========== Color Scheme ========== */
 #define COLOR_BG       lv_color_hex(0x1A1A2E)
 #define COLOR_SURFACE  lv_color_hex(0x16213E)
