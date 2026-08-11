@@ -92,6 +92,18 @@ void ui_set_callbacks(void (*prev)(void), void (*play)(void), void (*next)(void)
 }
 
 /* ========== Menu Button Handlers ========== */
+/* Callback for menu item execution (set by main.c) */
+static void (*on_menu_play_cb)(void) = NULL;
+static void (*on_menu_usb_cb)(void) = NULL;
+static void (*on_menu_settings_cb)(void) = NULL;
+
+void ui_set_menu_callbacks(void (*play)(void), void (*usb)(void), void (*settings)(void))
+{
+    on_menu_play_cb = play;
+    on_menu_usb_cb = usb;
+    on_menu_settings_cb = settings;
+}
+
 static void menu_btn_handler(lv_event_t *e)
 {
     lv_obj_t *btn = lv_event_get_target(e);
@@ -99,8 +111,19 @@ static void menu_btn_handler(lv_event_t *e)
         if (btn == menu_btns[i]) {
             menu_selection = (menu_item_t)i;
             update_menu_focus(); /* Update visual immediately */
-            /* Touch click should also trigger the action, not just select */
-            ui_menu_confirm();
+            
+            /* Execute the corresponding action */
+            switch (menu_selection) {
+                case MENU_ITEM_PLAY:
+                    if (on_menu_play_cb) on_menu_play_cb();
+                    break;
+                case MENU_ITEM_USB:
+                    if (on_menu_usb_cb) on_menu_usb_cb();
+                    break;
+                case MENU_ITEM_SETTINGS:
+                    if (on_menu_settings_cb) on_menu_settings_cb();
+                    break;
+            }
             break;
         }
     }

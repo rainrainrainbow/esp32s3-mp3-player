@@ -416,6 +416,29 @@ static void list_flash_tree(const char *path, int depth)
     closedir(dir);
 }
 
+/* ========== Menu Action Wrappers (for touch click) ========== */
+static void menu_play_action(void)
+{
+    if (max_tracks > 0) {
+        preload_images_for_track(current_track);
+        audio_player_play_track(current_track);
+        is_playing = true;
+        lvgl_port_lock(100);
+        ui_show_playing(current_track);
+        if (g_image_cache_count > 0) {
+            ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+        }
+        lvgl_port_unlock();
+    }
+}
+
+static void menu_settings_action(void)
+{
+    lvgl_port_lock(100);
+    ui_show_settings();
+    lvgl_port_unlock();
+}
+
 /* ========== Button Task (GPIO fallback) ========== */
 static void button_task(void *param)
 {
@@ -585,6 +608,9 @@ void app_main(void)
 
     /* Set UI callbacks */
     ui_set_callbacks(on_prev, on_play, on_next, on_volume_change, on_brightness_change, on_usb_mode);
+
+    /* Set menu item callbacks for touch click */
+    ui_set_menu_callbacks(menu_play_action, on_usb_mode, menu_settings_action);
 
     /* Show welcome screen */
     ui_show_welcome();

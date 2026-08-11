@@ -43,6 +43,11 @@ void ui_set_callbacks(ui_btn_cb_t prev_cb, ui_btn_cb_t play_cb, ui_btn_cb_t next
                       ui_usb_cb_t usb_cb);
 
 /**
+ * @brief Set menu item execution callbacks (for touch click)
+ */
+void ui_set_menu_callbacks(void (*play)(void), void (*usb)(void), void (*settings)(void));
+
+/**
  * @brief Show welcome screen
  */
 void ui_show_welcome(void);
