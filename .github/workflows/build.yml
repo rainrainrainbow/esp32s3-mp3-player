@@ -1,7 +1,7 @@
 name: ESP32-S3 MP3 Player Build
 on:
   push:
-    branches: [ main, minimal-player ]
+    branches: [ main, minimal-player, lvgl ]
   workflow_dispatch:
 
 jobs:
