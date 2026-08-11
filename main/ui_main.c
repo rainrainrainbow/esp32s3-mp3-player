@@ -1,6 +1,6 @@
 /*
  * ui_main.c - LVGL UI implementation (v8.3)
- * Modern flat design with dark theme for 240x320 display
+ * Landscape 320x240, full-screen image, swipe to open settings
  */
 
 #include <stdio.h>
@@ -26,9 +26,12 @@ static lv_obj_t *settings_panel = NULL;
 static lv_obj_t *welcome_bar = NULL;
 
 /* Playing screen objects */
-static lv_obj_t *track_label = NULL;
 static lv_obj_t *img_canvas = NULL;
+static lv_obj_t *track_label = NULL;
 static lv_obj_t *btn_play = NULL;
+static lv_obj_t *btn_prev = NULL;
+static lv_obj_t *btn_next = NULL;
+static lv_obj_t *ctrl_bar = NULL;
 
 /* Settings objects */
 static lv_obj_t *vol_slider = NULL;
@@ -46,6 +49,14 @@ static void (*on_play_cb)(void) = NULL;
 static void (*on_next_cb)(void) = NULL;
 static void (*on_vol_change_cb)(uint8_t) = NULL;
 static void (*on_bright_change_cb)(uint8_t) = NULL;
+
+/* Gesture tracking */
+static bool gesture_active = false;
+static lv_coord_t gesture_start_x = 0;
+static lv_coord_t gesture_start_y = 0;
+
+/* Control bar auto-hide timer */
+static lv_timer_t *ctrl_hide_timer = NULL;
 
 /* ========== Color Scheme ========== */
 #define COLOR_BG       lv_color_hex(0x1A1A2E)
@@ -96,6 +107,75 @@ static void bright_slider_handler(lv_event_t *e)
     if (on_bright_change_cb) on_bright_change_cb(val);
 }
 
+/* ========== Control Bar Auto-Hide ========== */
+static void ctrl_hide_timer_cb(lv_timer_t *timer)
+{
+    if (ctrl_bar) {
+        lv_obj_add_flag(ctrl_bar, LV_OBJ_FLAG_HIDDEN);
+    }
+    lv_timer_del(ctrl_hide_timer);
+    ctrl_hide_timer = NULL;
+}
+
+static void show_controls_temporarily(void)
+{
+    if (ctrl_bar) {
+        lv_obj_clear_flag(ctrl_bar, LV_OBJ_FLAG_HIDDEN);
+        /* Reset auto-hide timer */
+        if (ctrl_hide_timer) {
+            lv_timer_reset(ctrl_hide_timer);
+        } else {
+            ctrl_hide_timer = lv_timer_create(ctrl_hide_timer_cb, 3000, NULL);
+            lv_timer_set_repeat_count(ctrl_hide_timer, 1);
+        }
+    }
+}
+
+/* ========== Gesture / Swipe Detection ========== */
+static void playing_scr_gesture_cb(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    
+    if (code == LV_EVENT_PRESSING) {
+        lv_indev_t *indev = lv_indev_get_act();
+        if (indev) {
+            lv_point_t p;
+            lv_indev_get_point(indev, &p);
+            if (!gesture_active) {
+                gesture_start_x = p.x;
+                gesture_start_y = p.y;
+                gesture_active = true;
+            }
+        }
+    } else if (code == LV_EVENT_RELEASED) {
+        if (gesture_active) {
+            lv_indev_t *indev = lv_indev_get_act();
+            if (indev) {
+                lv_point_t p;
+                lv_indev_get_point(indev, &p);
+                lv_coord_t dx = p.x - gesture_start_x;
+                lv_coord_t dy = p.y - gesture_start_y;
+                
+                /* Swipe right to open settings */
+                if (dx > 80 && abs(dy) < 60) {
+                    if (on_play_cb) {
+                        /* Use play callback as toggle for settings */
+                        ui_show_settings();
+                    }
+                }
+                /* Swipe left to toggle controls */
+                if (dx < -80 && abs(dy) < 60) {
+                    show_controls_temporarily();
+                }
+            }
+            gesture_active = false;
+        }
+    } else if (code == LV_EVENT_CLICKED) {
+        /* Tap on image area to show/hide controls */
+        show_controls_temporarily();
+    }
+}
+
 /* ========== Create Welcome Screen ========== */
 static void create_welcome_screen(void)
 {
@@ -111,7 +191,7 @@ static void create_welcome_screen(void)
 
     /* Loading bar */
     welcome_bar = lv_bar_create(scr_welcome);
-    lv_obj_set_size(welcome_bar, 160, 6);
+    lv_obj_set_size(welcome_bar, 200, 6);
     lv_obj_align(welcome_bar, LV_ALIGN_CENTER, 0, 30);
     lv_obj_set_style_bg_color(welcome_bar, COLOR_SURFACE, 0);
     lv_obj_set_style_bg_color(welcome_bar, COLOR_ACCENT, LV_PART_INDICATOR);
@@ -124,50 +204,44 @@ static void create_welcome_screen(void)
     lv_obj_align(loading, LV_ALIGN_CENTER, 0, 50);
 }
 
-/* ========== Create Playing Screen ========== */
+/* ========== Create Playing Screen (Full-screen image + swipe) ========== */
 static void create_playing_screen(void)
 {
     scr_playing = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr_playing, COLOR_BG, 0);
-
-    /* Status bar area */
-    lv_obj_t *status_bar = lv_obj_create(scr_playing);
-    lv_obj_set_size(status_bar, DISPLAY_WIDTH, 30);
-    lv_obj_align(status_bar, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(status_bar, COLOR_SURFACE, 0);
-    lv_obj_set_style_border_width(status_bar, 0, 0);
-    lv_obj_set_style_radius(status_bar, 0, 0);
-
-    /* Now Playing label */
-    lv_obj_t *play_label = lv_label_create(status_bar);
-    lv_label_set_text(play_label, "Now Playing");
-    lv_obj_set_style_text_color(play_label, COLOR_ACCENT, 0);
-    lv_obj_align(play_label, LV_ALIGN_LEFT_MID, 8, 0);
-
-    /* Track label */
-    track_label = lv_label_create(status_bar);
+    
+    /* Full-screen image canvas */
+    img_canvas = lv_canvas_create(scr_playing);
+    lv_obj_set_size(img_canvas, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+    lv_obj_align(img_canvas, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(img_canvas, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_border_width(img_canvas, 0, 0);
+    lv_obj_set_style_radius(img_canvas, 0, 0);
+    
+    /* Add gesture handler to the playing screen */
+    lv_obj_add_event_cb(scr_playing, playing_scr_gesture_cb, LV_EVENT_ALL, NULL);
+    
+    /* Track label overlay (top-left corner) */
+    track_label = lv_label_create(scr_playing);
     lv_label_set_text(track_label, "Track 1");
     lv_obj_set_style_text_color(track_label, COLOR_TEXT, 0);
-    lv_obj_align(track_label, LV_ALIGN_RIGHT_MID, -8, 0);
-
-    /* Image canvas area */
-    img_canvas = lv_canvas_create(scr_playing);
-    lv_obj_set_size(img_canvas, DISPLAY_WIDTH, DISPLAY_HEIGHT - 30 - 60);
-    lv_obj_align(img_canvas, LV_ALIGN_TOP_MID, 0, 30);
-    lv_obj_set_style_bg_color(img_canvas, lv_color_hex(0x000000), 0);
-
-    /* Bottom control bar */
-    lv_obj_t *ctrl_bar = lv_obj_create(scr_playing);
-    lv_obj_set_size(ctrl_bar, DISPLAY_WIDTH, 60);
+    lv_obj_set_style_bg_color(track_label, lv_color_hex(0x80000000), 0);
+    lv_obj_set_style_pad_all(track_label, 4, 0);
+    lv_obj_align(track_label, LV_ALIGN_TOP_LEFT, 8, 8);
+    
+    /* Bottom control bar (hidden by default, shown on tap/swipe) */
+    ctrl_bar = lv_obj_create(scr_playing);
+    lv_obj_set_size(ctrl_bar, DISPLAY_WIDTH, 50);
     lv_obj_align(ctrl_bar, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(ctrl_bar, COLOR_SURFACE, 0);
+    lv_obj_set_style_bg_color(ctrl_bar, lv_color_hex(0xAA16213E), 0);
     lv_obj_set_style_border_width(ctrl_bar, 0, 0);
     lv_obj_set_style_radius(ctrl_bar, 0, 0);
+    lv_obj_add_flag(ctrl_bar, LV_OBJ_FLAG_HIDDEN);
 
     /* Prev button */
-    lv_obj_t *btn_prev = lv_btn_create(ctrl_bar);
-    lv_obj_set_size(btn_prev, 50, 40);
-    lv_obj_align(btn_prev, LV_ALIGN_LEFT_MID, 10, 0);
+    btn_prev = lv_btn_create(ctrl_bar);
+    lv_obj_set_size(btn_prev, 50, 36);
+    lv_obj_align(btn_prev, LV_ALIGN_LEFT_MID, 15, 0);
     lv_obj_set_style_bg_color(btn_prev, COLOR_PRIMARY, 0);
     lv_obj_t *prev_lbl = lv_label_create(btn_prev);
     lv_label_set_text(prev_lbl, LV_SYMBOL_PREV);
@@ -176,7 +250,7 @@ static void create_playing_screen(void)
 
     /* Play/Pause button */
     btn_play = lv_btn_create(ctrl_bar);
-    lv_obj_set_size(btn_play, 50, 40);
+    lv_obj_set_size(btn_play, 50, 36);
     lv_obj_align(btn_play, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(btn_play, COLOR_ACCENT, 0);
     lv_obj_t *play_lbl = lv_label_create(btn_play);
@@ -185,9 +259,9 @@ static void create_playing_screen(void)
     lv_obj_add_event_cb(btn_play, btn_play_handler, LV_EVENT_CLICKED, NULL);
 
     /* Next button */
-    lv_obj_t *btn_next = lv_btn_create(ctrl_bar);
-    lv_obj_set_size(btn_next, 50, 40);
-    lv_obj_align(btn_next, LV_ALIGN_RIGHT_MID, -10, 0);
+    btn_next = lv_btn_create(ctrl_bar);
+    lv_obj_set_size(btn_next, 50, 36);
+    lv_obj_align(btn_next, LV_ALIGN_RIGHT_MID, -15, 0);
     lv_obj_set_style_bg_color(btn_next, COLOR_PRIMARY, 0);
     lv_obj_t *next_lbl = lv_label_create(btn_next);
     lv_label_set_text(next_lbl, LV_SYMBOL_NEXT);
@@ -225,11 +299,13 @@ static void create_stopped_screen(void)
 static void create_settings_panel(void)
 {
     settings_panel = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(settings_panel, DISPLAY_WIDTH - 20, 200);
+    lv_obj_set_size(settings_panel, DISPLAY_WIDTH - 20, 180);
     lv_obj_align(settings_panel, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(settings_panel, COLOR_SURFACE, 0);
     lv_obj_set_style_radius(settings_panel, 10, 0);
     lv_obj_set_style_border_width(settings_panel, 0, 0);
+    lv_obj_set_style_shadow_width(settings_panel, 20, 0);
+    lv_obj_set_style_shadow_color(settings_panel, lv_color_hex(0x000000), 0);
 
     /* Title */
     lv_obj_t *title = lv_label_create(settings_panel);
@@ -241,11 +317,11 @@ static void create_settings_panel(void)
     lv_obj_t *vol_title = lv_label_create(settings_panel);
     lv_label_set_text(vol_title, "Volume");
     lv_obj_set_style_text_color(vol_title, COLOR_MUTED, 0);
-    lv_obj_align(vol_title, LV_ALIGN_TOP_LEFT, 15, 40);
+    lv_obj_align(vol_title, LV_ALIGN_TOP_LEFT, 15, 35);
 
     vol_slider = lv_slider_create(settings_panel);
-    lv_obj_set_size(vol_slider, 160, 10);
-    lv_obj_align(vol_slider, LV_ALIGN_TOP_LEFT, 15, 60);
+    lv_obj_set_size(vol_slider, 180, 8);
+    lv_obj_align(vol_slider, LV_ALIGN_TOP_LEFT, 15, 55);
     lv_slider_set_range(vol_slider, 0, 100);
     lv_slider_set_value(vol_slider, 50, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(vol_slider, COLOR_BG, 0);
@@ -255,17 +331,17 @@ static void create_settings_panel(void)
     vol_label = lv_label_create(settings_panel);
     lv_label_set_text(vol_label, "50%");
     lv_obj_set_style_text_color(vol_label, COLOR_TEXT, 0);
-    lv_obj_align(vol_label, LV_ALIGN_TOP_LEFT, 180, 60);
+    lv_obj_align(vol_label, LV_ALIGN_TOP_LEFT, 200, 55);
 
     /* Brightness slider */
     lv_obj_t *bright_title = lv_label_create(settings_panel);
     lv_label_set_text(bright_title, "Brightness");
     lv_obj_set_style_text_color(bright_title, COLOR_MUTED, 0);
-    lv_obj_align(bright_title, LV_ALIGN_TOP_LEFT, 15, 90);
+    lv_obj_align(bright_title, LV_ALIGN_TOP_LEFT, 15, 85);
 
     bright_slider = lv_slider_create(settings_panel);
-    lv_obj_set_size(bright_slider, 160, 10);
-    lv_obj_align(bright_slider, LV_ALIGN_TOP_LEFT, 15, 110);
+    lv_obj_set_size(bright_slider, 180, 8);
+    lv_obj_align(bright_slider, LV_ALIGN_TOP_LEFT, 15, 105);
     lv_slider_set_range(bright_slider, 0, 100);
     lv_slider_set_value(bright_slider, 75, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(bright_slider, COLOR_BG, 0);
@@ -275,11 +351,11 @@ static void create_settings_panel(void)
     bright_label = lv_label_create(settings_panel);
     lv_label_set_text(bright_label, "75%");
     lv_obj_set_style_text_color(bright_label, COLOR_TEXT, 0);
-    lv_obj_align(bright_label, LV_ALIGN_TOP_LEFT, 180, 110);
+    lv_obj_align(bright_label, LV_ALIGN_TOP_LEFT, 200, 105);
 
     /* Close button */
     lv_obj_t *close_btn = lv_btn_create(settings_panel);
-    lv_obj_set_size(close_btn, 80, 30);
+    lv_obj_set_size(close_btn, 80, 28);
     lv_obj_align(close_btn, LV_ALIGN_BOTTOM_MID, 0, -10);
     lv_obj_set_style_bg_color(close_btn, COLOR_ACCENT, 0);
     lv_obj_t *close_lbl = lv_label_create(close_btn);
@@ -294,7 +370,7 @@ static void create_settings_panel(void)
 
 void ui_init(void)
 {
-    ESP_LOGI(TAG, "Creating UI screens...");
+    ESP_LOGI(TAG, "Creating UI screens (landscape 320x240)...");
 
     create_welcome_screen();
     create_playing_screen();
@@ -324,6 +400,8 @@ void ui_show_playing(uint8_t track)
         char buf[16];
         snprintf(buf, sizeof(buf), "Track %d", track);
         lv_label_set_text(track_label, buf);
+        /* Hide settings panel when switching to playing */
+        ui_hide_settings();
     }
 }
 
@@ -384,20 +462,22 @@ void ui_set_image(const uint16_t *pixels, uint16_t w, uint16_t h)
 {
     if (!img_canvas || !pixels) return;
 
-    /* Allocate or reuse image buffer */
     size_t buf_size = (size_t)w * h * sizeof(lv_color_t);
+    
+    /* Free old buffer if size changed */
+    if (img_buf) {
+        heap_caps_free(img_buf);
+        img_buf = NULL;
+    }
+    
+    img_buf = heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!img_buf) {
-        img_buf = heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!img_buf) {
-            ESP_LOGE(TAG, "Failed to allocate image buffer");
-            return;
-        }
+        ESP_LOGE(TAG, "Failed to allocate image buffer (%zu bytes)", buf_size);
+        return;
     }
 
-    /* Copy pixels (RGB565 -> LVGL color) */
     memcpy(img_buf, pixels, buf_size);
 
-    /* Create image descriptor */
     img_dsc.header.always_zero = 0;
     img_dsc.header.w = w;
     img_dsc.header.h = h;
@@ -405,7 +485,6 @@ void ui_set_image(const uint16_t *pixels, uint16_t w, uint16_t h)
     img_dsc.data_size = buf_size;
     img_dsc.data = (const uint8_t *)img_buf;
 
-    /* Draw on canvas */
     lv_canvas_set_buffer(img_canvas, img_buf, w, h, LV_IMG_CF_TRUE_COLOR);
     lv_canvas_draw_img(img_canvas, 0, 0, &img_dsc, NULL);
 }

@@ -29,8 +29,9 @@ static const char *TAG = "TOUCH";
 #define FT5X06_REG_TOUCH1_YH    0x05
 #define FT5X06_REG_TOUCH1_YL    0x06
 
-#define FT5X06_MAX_X  240
-#define FT5X06_MAX_Y  320
+/* Native touch panel resolution (portrait 240x320) */
+#define FT5X06_NATIVE_X  240
+#define FT5X06_NATIVE_Y  320
 
 static bool touch_initialized = false;
 static touch_point_t last_point = {0, 0};
@@ -137,6 +138,7 @@ esp_err_t touch_driver_init(void)
 
 /*
  * Get current touch point
+ * Returns coordinates mapped to landscape (320x240) display
  */
 bool touch_driver_get_point(touch_point_t *pt)
 {
@@ -144,7 +146,7 @@ bool touch_driver_get_point(touch_point_t *pt)
 
     uint8_t data[6];
 
-    /* Read number of touches + first touch coordinates */
+    /* Read number of touches + first touch coordinates (regs 0x02-0x07) */
     if (ft5x06_read_reg(FT5X06_REG_NUM_TOUCHES, data, 6) != ESP_OK) {
         return false;
     }
@@ -154,16 +156,21 @@ bool touch_driver_get_point(touch_point_t *pt)
         return false;
     }
 
-    /* Parse touch 1 coordinates */
-    uint16_t x = ((uint16_t)(data[1] & 0x0F) << 8) | data[2];
-    uint16_t y = ((uint16_t)(data[3] & 0x0F) << 8) | data[4];
+    /* Parse touch 1 coordinates (12-bit format) */
+    uint16_t raw_x = ((uint16_t)(data[1] & 0x0F) << 8) | data[2];
+    uint16_t raw_y = ((uint16_t)(data[3] & 0x0F) << 8) | data[4];
 
-    /* Clamp to screen bounds */
-    if (x >= FT5X06_MAX_X) x = FT5X06_MAX_X - 1;
-    if (y >= FT5X06_MAX_Y) y = FT5X06_MAX_Y - 1;
+    /* Clamp to native panel bounds */
+    if (raw_x >= FT5X06_NATIVE_X) raw_x = FT5X06_NATIVE_X - 1;
+    if (raw_y >= FT5X06_NATIVE_Y) raw_y = FT5X06_NATIVE_Y - 1;
 
-    pt->x = x;
-    pt->y = y;
+    /* Map portrait (240x320) to landscape (320x240):
+     * landscape_x = native_y
+     * landscape_y = native_width - native_x  (mirror Y to match display)
+     */
+    pt->x = raw_y;
+    pt->y = FT5X06_NATIVE_X - 1 - raw_x;
+
     last_point = *pt;
     return true;
 }

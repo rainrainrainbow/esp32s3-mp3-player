@@ -159,11 +159,12 @@ void tft_init(void)
     tft_send_cmd(CMD_SLPOUT);
     vTaskDelay(pdMS_TO_TICKS(150));
     
-    // MADCTL = 0x08 (BGR only, no MX) - fix horizontal mirror
+    // MADCTL for landscape 320x240: MV|MY|BGR = 0x68
+    // MV(0x20) swaps X/Y, MY(0x40) mirrors Y, BGR(0x08)
     tft_send_cmd(CMD_MADCTL);
-    uint8_t madctl = 0x08;
+    uint8_t madctl = 0x68;
     tft_send_data(&madctl, 1);
-    ESP_LOGI(TAG, "MADCTL = 0x%02X", madctl);
+    ESP_LOGI(TAG, "MADCTL = 0x%02X (landscape)", madctl);
     
     // COLMOD = 0x55 (16-bit)
     tft_send_cmd(CMD_COLMOD);
