@@ -30,10 +30,9 @@
 #define LV_FONT_MONTSERRAT_48 1
 
 /*====================
-   FS SETTINGS
+   FS SETTINGS - Disabled, not needed
  *====================*/
-#define LV_USE_FS_POSIX 1
-#define LV_FS_POSIX_LETTER 'A'
+#define LV_USE_FS_POSIX 0
 
 /*====================
    OTHERS
