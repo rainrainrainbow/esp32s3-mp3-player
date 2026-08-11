@@ -123,6 +123,8 @@ static void menu_btn_handler(lv_event_t *e)
                 case MENU_ITEM_SETTINGS:
                     if (on_menu_settings_cb) on_menu_settings_cb();
                     break;
+                default:
+                    break;
             }
             break;
         }
