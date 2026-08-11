@@ -93,6 +93,11 @@ static void btn_next_handler(lv_event_t *e)
     if (on_next_cb) on_next_cb();
 }
 
+static void close_settings_handler(lv_event_t *e)
+{
+    ui_hide_settings();
+}
+
 static void vol_slider_handler(lv_event_t *e)
 {
     lv_obj_t *slider = lv_event_get_target(e);
@@ -158,10 +163,7 @@ static void playing_scr_gesture_cb(lv_event_t *e)
                 
                 /* Swipe right to open settings */
                 if (dx > 80 && abs(dy) < 60) {
-                    if (on_play_cb) {
-                        /* Use play callback as toggle for settings */
-                        ui_show_settings();
-                    }
+                    ui_show_settings();
                 }
                 /* Swipe left to toggle controls */
                 if (dx < -80 && abs(dy) < 60) {
@@ -359,7 +361,7 @@ static void create_settings_panel(void)
     lv_obj_t *close_lbl = lv_label_create(close_btn);
     lv_label_set_text(close_lbl, "Close");
     lv_obj_center(close_lbl);
-    lv_obj_add_event_cb(close_btn, btn_play_handler, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(close_btn, close_settings_handler, LV_EVENT_CLICKED, NULL);
 
     lv_obj_add_flag(settings_panel, LV_OBJ_FLAG_HIDDEN);
 }
