@@ -93,6 +93,8 @@ static void ft5x06_reset(void)
 esp_err_t touch_driver_init(void)
 {
     ESP_LOGI(TAG, "Initializing FT5x06 touch at addr 0x%02X", TOUCH_I2C_ADDR);
+    ESP_LOGI(TAG, "Touch pins: SDA=%d, SCL=%d, RST=%d, IRQ=%d",
+             TOUCH_I2C_SDA, TOUCH_I2C_SCL, TOUCH_RST_GPIO, TOUCH_IRQ_GPIO);
 
     /* Configure I2C bus (reuse I2C_NUM_1 which is used for nothing else here) */
     i2c_config_t conf = {
@@ -120,19 +122,42 @@ esp_err_t touch_driver_init(void)
     /* Reset the touch controller */
     ft5x06_reset();
 
+    /* Wait for FT5x06 to stabilize after reset */
+    vTaskDelay(pdMS_TO_TICKS(100));
+
     /* Verify chip ID (register 0xA8 = FT5x06 chip ID, usually 0x06) */
     uint8_t chip_id = 0;
     if (ft5x06_read_reg(0xA8, &chip_id, 1) == ESP_OK) {
-        ESP_LOGI(TAG, "FT5x06 chip ID: 0x%02X", chip_id);
+        ESP_LOGI(TAG, "FT5x06 chip ID: 0x%02X (expected 0x06)", chip_id);
+        if (chip_id != 0x06 && chip_id != 0x00) {
+            ESP_LOGW(TAG, "Unexpected chip ID - may not be FT5x06");
+        }
     } else {
-        ESP_LOGW(TAG, "Failed to read FT5x06 chip ID - continuing anyway");
+        ESP_LOGE(TAG, "Failed to read FT5x06 chip ID - I2C communication error!");
+        ESP_LOGE(TAG, "Check wiring: SDA=%d, SCL=%d, ADDR=0x%02X",
+                 TOUCH_I2C_SDA, TOUCH_I2C_SCL, TOUCH_I2C_ADDR);
+        /* Continue anyway - some clones don't respond to chip ID read */
+    }
+
+    /* Read firmware version (registers 0xA6-0xA7) */
+    uint8_t fw_ver[2] = {0};
+    if (ft5x06_read_reg(0xA6, fw_ver, 2) == ESP_OK) {
+        ESP_LOGI(TAG, "FT5x06 firmware: 0x%02X%02X", fw_ver[0], fw_ver[1]);
     }
 
     /* Configure interrupt mode (0x86 = polling mode) */
     ft5x06_write_reg(0x86, 0x01);
 
+    /* Test read of touch data register */
+    uint8_t test_data = 0;
+    if (ft5x06_read_reg(FT5X06_REG_NUM_TOUCHES, &test_data, 1) == ESP_OK) {
+        ESP_LOGI(TAG, "Touch data register readable: num_touches=0x%02X", test_data);
+    } else {
+        ESP_LOGE(TAG, "Cannot read touch data register - touch will not work!");
+    }
+
     touch_initialized = true;
-    ESP_LOGI(TAG, "FT5x06 initialized: SDA=%d, SCL=%d", TOUCH_I2C_SDA, TOUCH_I2C_SCL);
+    ESP_LOGI(TAG, "FT5x06 initialized successfully");
     return ESP_OK;
 }
 
