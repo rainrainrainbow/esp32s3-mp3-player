@@ -2,7 +2,6 @@
  * @file lv_conf.h
  * Configuration file for LVGL v8.3
  */
-
 #ifndef LV_CONF_H
 #define LV_CONF_H
 
@@ -41,4 +40,4 @@
  *====================*/
 #define LV_LABEL_TEXT_SELECTION 1
 
-#endif /*LV_CONF_H*/
+#endif /* LV_CONF_H */
