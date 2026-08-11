@@ -95,6 +95,9 @@ static void menu_btn_handler(lv_event_t *e)
     for (int i = 0; i < MENU_ITEM_COUNT; i++) {
         if (btn == menu_btns[i]) {
             menu_selection = (menu_item_t)i;
+            update_menu_focus(); /* Update visual immediately */
+            /* Touch click should also trigger the action, not just select */
+            ui_menu_confirm();
             break;
         }
     }
