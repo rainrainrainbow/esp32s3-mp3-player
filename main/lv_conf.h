@@ -22,6 +22,7 @@
    HAL SETTINGS
  *====================*/
 #define LV_TICK_CUSTOM 1
+#define LV_TICK_CUSTOM_INCLUDE "esp_timer.h"
 #define LV_TICK_CUSTOM_SYS_TIME_EXPR (esp_timer_get_time() / 1000)
 
 /*====================
@@ -32,7 +33,8 @@
 /*====================
    FS SETTINGS
  *====================*/
-#define LV_USE_FS_POSIX 0
+#define LV_USE_FS_POSIX 1
+#define LV_FS_POSIX_LETTER 'A'
 
 /*====================
    OTHERS
