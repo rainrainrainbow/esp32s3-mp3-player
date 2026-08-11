@@ -503,6 +503,7 @@ void ui_settings_adjust(int8_t direction)
     if (!settings_panel || lv_obj_has_flag(settings_panel, LV_OBJ_FLAG_HIDDEN)) return;
 
     const int8_t step = 5; /* Adjust by 5% per press */
+    char buf[8];
 
     if (direction > 0) {
         /* GPIO43 short press: increase focused slider */
@@ -510,14 +511,14 @@ void ui_settings_adjust(int8_t direction)
             int32_t val = lv_slider_get_value(vol_slider) + step;
             if (val > 100) val = 100;
             lv_slider_set_value(vol_slider, val, LV_ANIM_ON);
-            char buf[8]; snprintf(buf, sizeof(buf), "%ld%%", (long)val);
+            snprintf(buf, sizeof(buf), "%d%%", (int)val);
             lv_label_set_text(vol_label, buf);
             if (on_vol_change_cb) on_vol_change_cb((uint8_t)val);
         } else if (settings_focus == 1 && bright_slider) {
             int32_t val = lv_slider_get_value(bright_slider) + step;
             if (val > 100) val = 100;
             lv_slider_set_value(bright_slider, val, LV_ANIM_ON);
-            char buf[8]; snprintf(buf, sizeof(buf), "%ld%%", (long)val);
+            snprintf(buf, sizeof(buf), "%d%%", (int)val);
             lv_label_set_text(bright_label, buf);
             if (on_bright_change_cb) on_bright_change_cb((uint8_t)val);
         }
@@ -534,7 +535,7 @@ void ui_settings_adjust(int8_t direction)
                 lv_obj_set_style_outline_width(vol_slider, 0, 0);
             } else {
                 lv_slider_set_value(vol_slider, val, LV_ANIM_ON);
-                char buf[8]; snprintf(buf, sizeof(buf), "%ld%%", (long)val);
+                snprintf(buf, sizeof(buf), "%d%%", (int)val);
                 lv_label_set_text(vol_label, buf);
                 if (on_vol_change_cb) on_vol_change_cb((uint8_t)val);
             }
@@ -548,7 +549,7 @@ void ui_settings_adjust(int8_t direction)
                 lv_obj_set_style_outline_width(bright_slider, 0, 0);
             } else {
                 lv_slider_set_value(bright_slider, val, LV_ANIM_ON);
-                char buf[8]; snprintf(buf, sizeof(buf), "%ld%%", (long)val);
+                snprintf(buf, sizeof(buf), "%d%%", (int)val);
                 lv_label_set_text(bright_label, buf);
                 if (on_bright_change_cb) on_bright_change_cb((uint8_t)val);
             }
