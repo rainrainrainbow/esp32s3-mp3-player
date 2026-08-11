@@ -91,32 +91,13 @@ static void ft5x06_reset(void)
  * Initialize FT5x06 touch controller
  */
 esp_err_t touch_driver_init(void)
-{
     ESP_LOGI(TAG, "Initializing FT5x06 touch at addr 0x%02X", TOUCH_I2C_ADDR);
-    ESP_LOGI(TAG, "Touch pins: SDA=%d, SCL=%d, RST=%d, IRQ=%d",
-             TOUCH_I2C_SDA, TOUCH_I2C_SCL, TOUCH_RST_GPIO, TOUCH_IRQ_GPIO);
+    ESP_LOGI(TAG, "Touch shares I2C bus with ES8311: SDA=%d, SCL=%d, PORT=%d",
+             TOUCH_I2C_SDA, TOUCH_I2C_SCL, TOUCH_I2C_PORT);
 
-    /* Configure I2C bus (reuse I2C_NUM_1 which is used for nothing else here) */
-    i2c_config_t conf = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = TOUCH_I2C_SDA,
-        .scl_io_num = TOUCH_I2C_SCL,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 400000,
-        .clk_flags = 0,
-    };
-
-    esp_err_t ret = i2c_param_config(TOUCH_I2C_PORT, &conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2C config failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ret = i2c_driver_install(TOUCH_I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
-    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "I2C install failed: %s", esp_err_to_name(ret));
-        return ret;
+    /* I2C bus is already initialized by ES8311 codec (same port & pins).
+     * Do NOT re-initialize here - just verify the bus is available. */
+    esp_err_t ret = ESP_OK;
     }
 
     /* Reset the touch controller */

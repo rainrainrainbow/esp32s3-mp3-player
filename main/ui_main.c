@@ -63,6 +63,9 @@ static lv_timer_t *ctrl_hide_timer = NULL;
 /* Previous state for settings return */
 static ui_state_t prev_state = UI_STATE_MENU;
 
+/* Settings focus: 0=volume, 1=brightness */
+static uint8_t settings_focus = 0;
+
 /* ========== Color Scheme ========== */
 #define COLOR_BG       lv_color_hex(0x1A1A2E)
 #define COLOR_SURFACE  lv_color_hex(0x16213E)
@@ -474,6 +477,15 @@ void ui_show_settings(void)
         lv_obj_clear_flag(settings_panel, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(settings_panel);
         current_state = UI_STATE_SETTINGS;
+        /* Reset focus to volume and highlight it */
+        settings_focus = 0;
+        if (vol_slider) {
+            lv_obj_set_style_outline_width(vol_slider, 2, 0);
+            lv_obj_set_style_outline_color(vol_slider, COLOR_ACCENT, 0);
+        }
+        if (bright_slider) {
+            lv_obj_set_style_outline_width(bright_slider, 0, 0);
+        }
     }
 }
 
@@ -482,6 +494,65 @@ void ui_hide_settings(void)
     if (settings_panel) {
         lv_obj_add_flag(settings_panel, LV_OBJ_FLAG_HIDDEN);
         current_state = prev_state;
+        settings_focus = 0; /* Reset focus to volume */
+    }
+}
+
+void ui_settings_adjust(int8_t direction)
+{
+    if (!settings_panel || lv_obj_has_flag(settings_panel, LV_OBJ_FLAG_HIDDEN)) return;
+
+    const int8_t step = 5; /* Adjust by 5% per press */
+
+    if (direction > 0) {
+        /* GPIO43 short press: increase focused slider */
+        if (settings_focus == 0 && vol_slider) {
+            int32_t val = lv_slider_get_value(vol_slider) + step;
+            if (val > 100) val = 100;
+            lv_slider_set_value(vol_slider, val, LV_ANIM_ON);
+            char buf[8]; snprintf(buf, sizeof(buf), "%ld%%", (long)val);
+            lv_label_set_text(vol_label, buf);
+            if (on_vol_change_cb) on_vol_change_cb((uint8_t)val);
+        } else if (settings_focus == 1 && bright_slider) {
+            int32_t val = lv_slider_get_value(bright_slider) + step;
+            if (val > 100) val = 100;
+            lv_slider_set_value(bright_slider, val, LV_ANIM_ON);
+            char buf[8]; snprintf(buf, sizeof(buf), "%ld%%", (long)val);
+            lv_label_set_text(bright_label, buf);
+            if (on_bright_change_cb) on_bright_change_cb((uint8_t)val);
+        }
+    } else {
+        /* GPIO0 short press: decrease focused slider, or switch focus */
+        if (settings_focus == 0 && vol_slider) {
+            int32_t val = lv_slider_get_value(vol_slider) - step;
+            if (val < 0) {
+                /* Already at min, switch focus to brightness */
+                settings_focus = 1;
+                /* Highlight brightness slider */
+                lv_obj_set_style_outline_width(bright_slider, 2, 0);
+                lv_obj_set_style_outline_color(bright_slider, COLOR_ACCENT, 0);
+                lv_obj_set_style_outline_width(vol_slider, 0, 0);
+            } else {
+                lv_slider_set_value(vol_slider, val, LV_ANIM_ON);
+                char buf[8]; snprintf(buf, sizeof(buf), "%ld%%", (long)val);
+                lv_label_set_text(vol_label, buf);
+                if (on_vol_change_cb) on_vol_change_cb((uint8_t)val);
+            }
+        } else if (settings_focus == 1 && bright_slider) {
+            int32_t val = lv_slider_get_value(bright_slider) - step;
+            if (val < 0) {
+                /* Already at min, switch focus to volume */
+                settings_focus = 0;
+                lv_obj_set_style_outline_width(vol_slider, 2, 0);
+                lv_obj_set_style_outline_color(vol_slider, COLOR_ACCENT, 0);
+                lv_obj_set_style_outline_width(bright_slider, 0, 0);
+            } else {
+                lv_slider_set_value(bright_slider, val, LV_ANIM_ON);
+                char buf[8]; snprintf(buf, sizeof(buf), "%ld%%", (long)val);
+                lv_label_set_text(bright_label, buf);
+                if (on_bright_change_cb) on_bright_change_cb((uint8_t)val);
+            }
+        }
     }
 }
 

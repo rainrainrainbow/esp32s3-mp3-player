@@ -40,9 +40,10 @@
 #define I2C_SLAVE_PORT       I2C_NUM_0
 
 /* ========== Touch Screen Configuration ========== */
-#define TOUCH_I2C_SDA        GPIO_NUM_8
-#define TOUCH_I2C_SCL        GPIO_NUM_9
-#define TOUCH_I2C_PORT       I2C_NUM_1
+/* Touch shares I2C bus with ES8311 codec (same SDA/SCL pins) */
+#define TOUCH_I2C_SDA        AUDIO_CODEC_I2C_SDA_PIN   /* GPIO4, shared with ES8311 */
+#define TOUCH_I2C_SCL        AUDIO_CODEC_I2C_SCL_PIN   /* GPIO5, shared with ES8311 */
+#define TOUCH_I2C_PORT       I2C_NUM_1                  /* Same port as ES8311 */
 #define TOUCH_I2C_ADDR       0x38
 #define TOUCH_IRQ_GPIO       GPIO_NUM_7
 #define TOUCH_RST_GPIO       GPIO_NUM_6

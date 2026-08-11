@@ -437,13 +437,23 @@ static void button_task(void *param)
             while (gpio_get_level(GPIO_NUM_0) == 0) vTaskDelay(pdMS_TO_TICKS(20));
 
             if (long_press) {
-                on_usb_mode();
+                ui_state_t state = ui_get_state();
+                if (state == UI_STATE_SETTINGS) {
+                    /* Long press GPIO0 in settings: close settings */
+                    if (lvgl_port_lock(100)) {
+                        ui_hide_settings();
+                        lvgl_port_unlock();
+                    }
+                } else {
+                    /* Long press GPIO0 elsewhere: USB mode switch */
+                    on_usb_mode();
+                }
             } else {
                 ui_state_t state = ui_get_state();
                 if (state == UI_STATE_SETTINGS) {
-                    /* Settings: close and return to previous screen */
+                    /* Settings: decrease focused slider / switch focus */
                     if (lvgl_port_lock(100)) {
-                        ui_hide_settings();
+                        ui_settings_adjust(-1);
                         lvgl_port_unlock();
                     }
                 } else if (state == UI_STATE_MENU) {
@@ -489,7 +499,11 @@ static void button_task(void *param)
                 /* Short press: context-dependent */
                 ui_state_t state = ui_get_state();
                 if (state == UI_STATE_SETTINGS) {
-                    /* In settings: do nothing (use GPIO0 to close) */
+                    /* Settings: increase focused slider */
+                    if (lvgl_port_lock(100)) {
+                        ui_settings_adjust(1);
+                        lvgl_port_unlock();
+                    }
                 } else if (state == UI_STATE_MENU) {
                     menu_item_t sel = ui_menu_confirm();
                     if (sel == MENU_ITEM_PLAY) {

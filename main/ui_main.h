@@ -88,6 +88,12 @@ void ui_show_settings(void);
 void ui_hide_settings(void);
 
 /**
+ * @brief Adjust settings via buttons (direction: -1=decrease, +1=increase)
+ * Cycles focus between volume and brightness sliders.
+ */
+void ui_settings_adjust(int8_t direction);
+
+/**
  * @brief Update volume display
  */
 void ui_set_volume(uint8_t volume);
