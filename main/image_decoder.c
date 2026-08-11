@@ -140,6 +140,36 @@ static bool decode_bmp(const char *filepath, uint16_t target_w, uint16_t target_
     return true;
 }
 
+// Parse JPEG SOF (Start of Frame) marker to get image dimensions
+// This avoids needing to call esp_jpeg_decode twice
+static bool jpeg_parse_dimensions(const uint8_t *data, size_t size, int *width, int *height)
+{
+    size_t offset = 2; // Skip SOI marker (0xFFD8)
+    while (offset + 1 < size) {
+        if (data[offset] != 0xFF) break;
+        uint8_t marker = data[offset + 1];
+        if (marker == 0xD8) { offset++; continue; } // SOI
+        if (marker == 0xD9) break; // EOI
+        if (marker == 0x00) { offset++; continue; } // Stuff byte
+
+        if (offset + 3 >= size) break;
+        uint16_t seg_len = ((uint16_t)data[offset + 2] << 8) | data[offset + 3];
+
+        if (marker == 0xC0 || marker == 0xC1 || marker == 0xC2) {
+            // SOF0, SOF1, SOF2 - contains dimensions
+            if (offset + 9 >= size) break;
+            *height = ((int)data[offset + 5] << 8) | data[offset + 6];
+            *width  = ((int)data[offset + 7] << 8) | data[offset + 8];
+            return true;
+        }
+
+        // Skip to next marker
+        if (seg_len < 2) break;
+        offset += 2 + seg_len;
+    }
+    return false;
+}
+
 // Decode JPEG using esp_jpeg v1.3.1 (software decoder), then nearest-neighbor scale to target
 static bool decode_jpeg(const char *filepath, uint16_t target_w, uint16_t target_h, decoded_image_t *out_image)
 {
@@ -172,13 +202,30 @@ static bool decode_jpeg(const char *filepath, uint16_t target_w, uint16_t target
     }
     fclose(f);
 
-    // Decode JPEG to RGB565 at original size
-    // esp_jpeg v1.3.1 API: esp_jpeg_decode(esp_jpeg_image_cfg_t *cfg, esp_jpeg_image_output_t *img)
+    // First: parse JPEG SOF to get original dimensions
+    int src_w = 0, src_h = 0;
+    if (!jpeg_parse_dimensions(jpeg_data, file_size, &src_w, &src_h)) {
+        ESP_LOGE(TAG, "Failed to parse JPEG dimensions");
+        free(jpeg_data);
+        return false;
+    }
+    ESP_LOGI(TAG, "JPEG: %dx%d -> %dx%d", src_w, src_h, target_w, target_h);
+
+    // Allocate output buffer for full-size decode (RGB565 = 2 bytes/pixel)
+    size_t full_size = (size_t)src_w * src_h * 2;
+    uint16_t *full_buf = heap_caps_malloc(full_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!full_buf) full_buf = malloc(full_size);
+    if (!full_buf) {
+        free(jpeg_data);
+        return false;
+    }
+
+    // Single call to esp_jpeg_decode with properly sized output buffer
     esp_jpeg_image_cfg_t cfg = {
         .indata = jpeg_data,
         .indata_size = (uint32_t)file_size,
-        .outbuf = NULL,      // Will be set after we know required size
-        .outbuf_size = 0,    // Will be set after we know required size
+        .outbuf = (uint8_t *)full_buf,
+        .outbuf_size = (uint32_t)full_size,
         .out_format = JPEG_IMAGE_FORMAT_RGB565,
         .out_scale = JPEG_IMAGE_SCALE_0,
         .flags = {0},
@@ -189,34 +236,9 @@ static bool decode_jpeg(const char *filepath, uint16_t target_w, uint16_t target
     };
 
     esp_jpeg_image_output_t out_info = {0};
-
-    // First call: get output size (outbuf=NULL)
     esp_err_t ret = esp_jpeg_decode(&cfg, &out_info);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "esp_jpeg_decode (info) failed: %s", esp_err_to_name(ret));
-        free(jpeg_data);
-        return false;
-    }
-
-    int src_w = out_info.width;
-    int src_h = out_info.height;
-    ESP_LOGI(TAG, "JPEG: %dx%d -> %dx%d", src_w, src_h, target_w, target_h);
-
-    // Allocate output buffer for full-size decode
-    size_t full_size = (size_t)src_w * src_h * 2;
-    uint16_t *full_buf = heap_caps_malloc(full_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!full_buf) full_buf = malloc(full_size);
-    if (!full_buf) {
-        free(jpeg_data);
-        return false;
-    }
-
-    // Second call: actual decode with output buffer
-    cfg.outbuf = (uint8_t *)full_buf;
-    cfg.outbuf_size = (uint32_t)full_size;
-    ret = esp_jpeg_decode(&cfg, &out_info);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "esp_jpeg_decode (decode) failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "esp_jpeg_decode failed: %s", esp_err_to_name(ret));
         free(full_buf);
         free(jpeg_data);
         return false;
