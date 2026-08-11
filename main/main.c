@@ -425,110 +425,125 @@ static void button_task(void *param)
     gpio_set_direction(GPIO_NUM_43, GPIO_MODE_INPUT);
     gpio_set_pull_mode(GPIO_NUM_43, GPIO_PULLUP_ONLY);
 
+    const TickType_t LONG_PRESS_MS = 2000; /* 2 seconds for long press */
+
     while (1) {
-        /* GPIO0: Up / Back / USB(long) */
+        /* ===== GPIO0 (Left Button): Back / Prev / Menu Navigate ===== */
         if (gpio_get_level(GPIO_NUM_0) == 0) {
             TickType_t pressed_at = xTaskGetTickCount();
             bool long_press = false;
             while (gpio_get_level(GPIO_NUM_0) == 0) {
-                if ((xTaskGetTickCount() - pressed_at) >= pdMS_TO_TICKS(3000)) { long_press = true; break; }
+                if ((xTaskGetTickCount() - pressed_at) >= pdMS_TO_TICKS(LONG_PRESS_MS)) {
+                    long_press = true;
+                    break;
+                }
                 vTaskDelay(pdMS_TO_TICKS(20));
             }
             while (gpio_get_level(GPIO_NUM_0) == 0) vTaskDelay(pdMS_TO_TICKS(20));
 
+            ui_state_t state = ui_get_state();
+
             if (long_press) {
-                ui_state_t state = ui_get_state();
-                if (state == UI_STATE_SETTINGS) {
-                    /* Long press GPIO0 in settings: close settings */
+                /* Long press GPIO0: Return to main menu from any screen */
+                if (state != UI_STATE_MENU && state != UI_STATE_WELCOME) {
                     if (lvgl_port_lock(100)) {
-                        ui_hide_settings();
+                        ui_hide_settings(); /* Close settings if open */
+                        ui_show_menu();
                         lvgl_port_unlock();
                     }
-                } else {
-                    /* Long press GPIO0 elsewhere: USB mode switch */
-                    on_usb_mode();
                 }
             } else {
-                ui_state_t state = ui_get_state();
-                if (state == UI_STATE_SETTINGS) {
-                    /* Settings: decrease focused slider / switch focus */
-                    if (lvgl_port_lock(100)) {
+                /* Short press GPIO0: Context-aware back/prev */
+                if (lvgl_port_lock(100)) {
+                    if (state == UI_STATE_SETTINGS) {
+                        /* In settings: decrease value or switch focus */
                         ui_settings_adjust(-1);
-                        lvgl_port_unlock();
-                    }
-                } else if (state == UI_STATE_MENU) {
-                    if (lvgl_port_lock(100)) {
+                    } else if (state == UI_STATE_MENU) {
+                        /* In menu: navigate up */
                         ui_menu_navigate(-1);
+                    } else if (state == UI_STATE_PLAYING || state == UI_STATE_STOPPED) {
+                        /* Playing: previous track */
                         lvgl_port_unlock();
+                        on_prev();
+                        continue; /* Skip the unlock below */
+                    } else if (state == UI_STATE_WELCOME) {
+                        /* Welcome: go to menu */
+                        ui_show_menu();
                     }
-                } else if (state == UI_STATE_PLAYING || state == UI_STATE_STOPPED) {
-                    on_prev();
+                    lvgl_port_unlock();
                 }
             }
             vTaskDelay(pdMS_TO_TICKS(150));
             continue;
         }
 
-        /* GPIO43: Down+Enter / Next / Toggle Settings(long) */
+        /* ===== GPIO43 (Right Button): Confirm / Next / Settings ===== */
         if (gpio_get_level(GPIO_NUM_43) == 0) {
             TickType_t pressed_at = xTaskGetTickCount();
             bool long_press = false;
             while (gpio_get_level(GPIO_NUM_43) == 0) {
-                if ((xTaskGetTickCount() - pressed_at) >= pdMS_TO_TICKS(2000)) { long_press = true; break; }
+                if ((xTaskGetTickCount() - pressed_at) >= pdMS_TO_TICKS(LONG_PRESS_MS)) {
+                    long_press = true;
+                    break;
+                }
                 vTaskDelay(pdMS_TO_TICKS(20));
             }
             while (gpio_get_level(GPIO_NUM_43) == 0) vTaskDelay(pdMS_TO_TICKS(20));
 
+            ui_state_t state = ui_get_state();
+
             if (long_press) {
-                /* Long press: toggle settings overlay */
-                ui_state_t state = ui_get_state();
-                if (state == UI_STATE_SETTINGS) {
-                    /* Already in settings, close it */
-                    if (lvgl_port_lock(100)) {
+                /* Long press GPIO43: Toggle settings panel */
+                if (lvgl_port_lock(100)) {
+                    if (state == UI_STATE_SETTINGS) {
                         ui_hide_settings();
-                        lvgl_port_unlock();
-                    }
-                } else if (state != UI_STATE_WELCOME) {
-                    /* Open settings from menu/playing/stopped */
-                    if (lvgl_port_lock(100)) {
+                    } else if (state != UI_STATE_WELCOME) {
                         ui_show_settings();
-                        lvgl_port_unlock();
                     }
+                    lvgl_port_unlock();
                 }
             } else {
-                /* Short press: context-dependent */
-                ui_state_t state = ui_get_state();
-                if (state == UI_STATE_SETTINGS) {
-                    /* Settings: increase focused slider */
-                    if (lvgl_port_lock(100)) {
+                /* Short press GPIO43: Confirm / Next / Navigate down */
+                if (lvgl_port_lock(100)) {
+                    if (state == UI_STATE_SETTINGS) {
+                        /* In settings: increase value */
                         ui_settings_adjust(1);
+                    } else if (state == UI_STATE_MENU) {
+                        /* In menu: confirm selection */
                         lvgl_port_unlock();
-                    }
-                } else if (state == UI_STATE_MENU) {
-                    menu_item_t sel = ui_menu_confirm();
-                    if (sel == MENU_ITEM_PLAY) {
-                        if (max_tracks > 0) {
-                            preload_images_for_track(current_track);
-                            audio_player_play_track(current_track);
-                            is_playing = true;
-                            if (lvgl_port_lock(100)) {
-                                ui_show_playing(current_track);
-                                if (g_image_cache_count > 0) {
-                                    ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+                        menu_item_t sel = ui_menu_confirm();
+                        if (sel == MENU_ITEM_PLAY) {
+                            if (max_tracks > 0) {
+                                preload_images_for_track(current_track);
+                                audio_player_play_track(current_track);
+                                is_playing = true;
+                                if (lvgl_port_lock(100)) {
+                                    ui_show_playing(current_track);
+                                    if (g_image_cache_count > 0) {
+                                        ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+                                    }
+                                    lvgl_port_unlock();
                                 }
+                            }
+                        } else if (sel == MENU_ITEM_USB) {
+                            on_usb_mode();
+                        } else if (sel == MENU_ITEM_SETTINGS) {
+                            if (lvgl_port_lock(100)) {
+                                ui_show_settings();
                                 lvgl_port_unlock();
                             }
                         }
-                    } else if (sel == MENU_ITEM_USB) {
-                        on_usb_mode();
-                    } else if (sel == MENU_ITEM_SETTINGS) {
-                        if (lvgl_port_lock(100)) {
-                            ui_show_settings();
-                            lvgl_port_unlock();
-                        }
+                        continue; /* Skip the unlock below */
+                    } else if (state == UI_STATE_PLAYING || state == UI_STATE_STOPPED) {
+                        /* Playing: next track */
+                        lvgl_port_unlock();
+                        on_next();
+                        continue; /* Skip the unlock below */
+                    } else if (state == UI_STATE_WELCOME) {
+                        /* Welcome: go to menu */
+                        ui_show_menu();
                     }
-                } else if (state == UI_STATE_PLAYING || state == UI_STATE_STOPPED) {
-                    on_next();
+                    lvgl_port_unlock();
                 }
             }
             vTaskDelay(pdMS_TO_TICKS(150));
