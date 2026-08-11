@@ -91,6 +91,7 @@ static void ft5x06_reset(void)
  * Initialize FT5x06 touch controller
  */
 esp_err_t touch_driver_init(void)
+{
     ESP_LOGI(TAG, "Initializing FT5x06 touch at addr 0x%02X", TOUCH_I2C_ADDR);
     ESP_LOGI(TAG, "Touch shares I2C bus with ES8311: SDA=%d, SCL=%d, PORT=%d",
              TOUCH_I2C_SDA, TOUCH_I2C_SCL, TOUCH_I2C_PORT);
@@ -98,7 +99,7 @@ esp_err_t touch_driver_init(void)
     /* I2C bus is already initialized by ES8311 codec (same port & pins).
      * Do NOT re-initialize here - just verify the bus is available. */
     esp_err_t ret = ESP_OK;
-    }
+    (void)ret;
 
     /* Reset the touch controller */
     ft5x06_reset();
