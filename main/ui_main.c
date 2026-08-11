@@ -1,6 +1,6 @@
 /*
  * ui_main.c - LVGL UI implementation (v8.3)
- * Landscape 320x240, full-screen image, swipe to open settings
+ * Landscape 320x240, main menu with Play/USB/Settings buttons
  */
 
 #include <stdio.h>
@@ -18,6 +18,7 @@ static ui_state_t current_state = UI_STATE_WELCOME;
 
 /* UI object pointers */
 static lv_obj_t *scr_welcome = NULL;
+static lv_obj_t *scr_menu = NULL;
 static lv_obj_t *scr_playing = NULL;
 static lv_obj_t *scr_stopped = NULL;
 static lv_obj_t *settings_panel = NULL;
@@ -25,12 +26,17 @@ static lv_obj_t *settings_panel = NULL;
 /* Welcome screen objects */
 static lv_obj_t *welcome_bar = NULL;
 
+/* Menu objects */
+static lv_obj_t *menu_btns[MENU_ITEM_COUNT];
+static lv_obj_t *menu_labels[MENU_ITEM_COUNT];
+static menu_item_t menu_selection = MENU_ITEM_PLAY;
+
 /* Playing screen objects */
 static lv_obj_t *img_obj = NULL;
 static lv_obj_t *track_label = NULL;
-static lv_obj_t *btn_play = NULL;
-static lv_obj_t *btn_prev = NULL;
-static lv_obj_t *btn_next = NULL;
+static lv_obj_t *btn_play_ctrl = NULL;
+static lv_obj_t *btn_prev_ctrl = NULL;
+static lv_obj_t *btn_next_ctrl = NULL;
 static lv_obj_t *ctrl_bar = NULL;
 
 /* Settings objects */
@@ -39,7 +45,7 @@ static lv_obj_t *bright_slider = NULL;
 static lv_obj_t *vol_label = NULL;
 static lv_obj_t *bright_label = NULL;
 
-/* Image canvas buffer */
+/* Image buffer */
 static lv_color_t *img_buf = NULL;
 static lv_img_dsc_t img_dsc = {0};
 
@@ -49,14 +55,13 @@ static void (*on_play_cb)(void) = NULL;
 static void (*on_next_cb)(void) = NULL;
 static void (*on_vol_change_cb)(uint8_t) = NULL;
 static void (*on_bright_change_cb)(uint8_t) = NULL;
-
-/* Gesture tracking */
-static bool gesture_active = false;
-static lv_coord_t gesture_start_x = 0;
-static lv_coord_t gesture_start_y = 0;
+static void (*on_usb_cb)(void) = NULL;
 
 /* Control bar auto-hide timer */
 static lv_timer_t *ctrl_hide_timer = NULL;
+
+/* Previous state for settings return */
+static ui_state_t prev_state = UI_STATE_MENU;
 
 /* ========== Color Scheme ========== */
 #define COLOR_BG       lv_color_hex(0x1A1A2E)
@@ -65,51 +70,31 @@ static lv_timer_t *ctrl_hide_timer = NULL;
 #define COLOR_ACCENT   lv_color_hex(0xE94560)
 #define COLOR_TEXT     lv_color_hex(0xEAEAEA)
 #define COLOR_MUTED    lv_color_hex(0x888888)
+#define COLOR_SELECTED lv_color_hex(0x2D5F8A)
 
 /* ========== Callback Setters ========== */
 void ui_set_callbacks(void (*prev)(void), void (*play)(void), void (*next)(void),
-                      void (*vol)(uint8_t), void (*bright)(uint8_t))
+                      void (*vol)(uint8_t), void (*bright)(uint8_t),
+                      void (*usb)(void))
 {
     on_prev_cb = prev;
     on_play_cb = play;
     on_next_cb = next;
     on_vol_change_cb = vol;
     on_bright_change_cb = bright;
+    on_usb_cb = usb;
 }
 
-/* ========== Button Event Handlers ========== */
-static void btn_prev_handler(lv_event_t *e)
+/* ========== Menu Button Handlers ========== */
+static void menu_btn_handler(lv_event_t *e)
 {
-    if (on_prev_cb) on_prev_cb();
-}
-
-static void btn_play_handler(lv_event_t *e)
-{
-    if (on_play_cb) on_play_cb();
-}
-
-static void btn_next_handler(lv_event_t *e)
-{
-    if (on_next_cb) on_next_cb();
-}
-
-static void close_settings_handler(lv_event_t *e)
-{
-    ui_hide_settings();
-}
-
-static void vol_slider_handler(lv_event_t *e)
-{
-    lv_obj_t *slider = lv_event_get_target(e);
-    uint8_t val = (uint8_t)lv_slider_get_value(slider);
-    if (on_vol_change_cb) on_vol_change_cb(val);
-}
-
-static void bright_slider_handler(lv_event_t *e)
-{
-    lv_obj_t *slider = lv_event_get_target(e);
-    uint8_t val = (uint8_t)lv_slider_get_value(slider);
-    if (on_bright_change_cb) on_bright_change_cb(val);
+    lv_obj_t *btn = lv_event_get_target(e);
+    for (int i = 0; i < MENU_ITEM_COUNT; i++) {
+        if (btn == menu_btns[i]) {
+            menu_selection = (menu_item_t)i;
+            break;
+        }
+    }
 }
 
 /* ========== Control Bar Auto-Hide ========== */
@@ -126,7 +111,6 @@ static void show_controls_temporarily(void)
 {
     if (ctrl_bar) {
         lv_obj_clear_flag(ctrl_bar, LV_OBJ_FLAG_HIDDEN);
-        /* Reset auto-hide timer */
         if (ctrl_hide_timer) {
             lv_timer_reset(ctrl_hide_timer);
         } else {
@@ -136,46 +120,39 @@ static void show_controls_temporarily(void)
     }
 }
 
-/* ========== Gesture / Swipe Detection ========== */
-static void playing_scr_gesture_cb(lv_event_t *e)
+/* ========== Control Button Handlers ========== */
+static void btn_prev_handler(lv_event_t *e)
 {
-    lv_event_code_t code = lv_event_get_code(e);
-    
-    if (code == LV_EVENT_PRESSING) {
-        lv_indev_t *indev = lv_indev_get_act();
-        if (indev) {
-            lv_point_t p;
-            lv_indev_get_point(indev, &p);
-            if (!gesture_active) {
-                gesture_start_x = p.x;
-                gesture_start_y = p.y;
-                gesture_active = true;
-            }
-        }
-    } else if (code == LV_EVENT_RELEASED) {
-        if (gesture_active) {
-            lv_indev_t *indev = lv_indev_get_act();
-            if (indev) {
-                lv_point_t p;
-                lv_indev_get_point(indev, &p);
-                lv_coord_t dx = p.x - gesture_start_x;
-                lv_coord_t dy = p.y - gesture_start_y;
-                
-                /* Swipe right to open settings */
-                if (dx > 80 && abs(dy) < 60) {
-                    ui_show_settings();
-                }
-                /* Swipe left to toggle controls */
-                if (dx < -80 && abs(dy) < 60) {
-                    show_controls_temporarily();
-                }
-            }
-            gesture_active = false;
-        }
-    } else if (code == LV_EVENT_CLICKED) {
-        /* Tap on image area to show/hide controls */
-        show_controls_temporarily();
-    }
+    if (on_prev_cb) on_prev_cb();
+}
+
+static void btn_play_handler(lv_event_t *e)
+{
+    if (on_play_cb) on_play_cb();
+}
+
+static void btn_next_handler(lv_event_t *e)
+{
+    if (on_next_cb) on_next_cb();
+}
+
+static void vol_slider_handler(lv_event_t *e)
+{
+    lv_obj_t *slider = lv_event_get_target(e);
+    uint8_t val = (uint8_t)lv_slider_get_value(slider);
+    if (on_vol_change_cb) on_vol_change_cb(val);
+}
+
+static void bright_slider_handler(lv_event_t *e)
+{
+    lv_obj_t *slider = lv_event_get_target(e);
+    uint8_t val = (uint8_t)lv_slider_get_value(slider);
+    if (on_bright_change_cb) on_bright_change_cb(val);
+}
+
+static void close_settings_handler(lv_event_t *e)
+{
+    ui_hide_settings();
 }
 
 /* ========== Create Welcome Screen ========== */
@@ -184,14 +161,12 @@ static void create_welcome_screen(void)
     scr_welcome = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr_welcome, COLOR_BG, 0);
 
-    /* Title */
     lv_obj_t *welcome_label = lv_label_create(scr_welcome);
     lv_label_set_text(welcome_label, "ESP32-S3\nMP3 Player");
     lv_obj_set_style_text_color(welcome_label, COLOR_TEXT, 0);
     lv_obj_set_style_text_align(welcome_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(welcome_label, LV_ALIGN_CENTER, 0, -30);
 
-    /* Loading bar */
     welcome_bar = lv_bar_create(scr_welcome);
     lv_obj_set_size(welcome_bar, 200, 6);
     lv_obj_align(welcome_bar, LV_ALIGN_CENTER, 0, 30);
@@ -199,37 +174,95 @@ static void create_welcome_screen(void)
     lv_obj_set_style_bg_color(welcome_bar, COLOR_ACCENT, LV_PART_INDICATOR);
     lv_bar_set_value(welcome_bar, 0, LV_ANIM_OFF);
 
-    /* Loading text */
     lv_obj_t *loading = lv_label_create(scr_welcome);
     lv_label_set_text(loading, "Initializing...");
     lv_obj_set_style_text_color(loading, COLOR_MUTED, 0);
     lv_obj_align(loading, LV_ALIGN_CENTER, 0, 50);
 }
 
-/* ========== Create Playing Screen (Full-screen image + swipe) ========== */
+/* ========== Create Main Menu Screen ========== */
+static void create_menu_screen(void)
+{
+    scr_menu = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr_menu, COLOR_BG, 0);
+
+    /* Title */
+    lv_obj_t *title = lv_label_create(scr_menu);
+    lv_label_set_text(title, "MP3 Player");
+    lv_obj_set_style_text_color(title, COLOR_TEXT, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 15);
+
+    /* Menu buttons - vertical layout */
+    static const char *menu_texts[] = { LV_SYMBOL_PLAY "  Play", LV_SYMBOL_USB "  USB Mode", LV_SYMBOL_SETTINGS "  Settings" };
+    int btn_y = 55;
+    int btn_h = 45;
+    int btn_gap = 10;
+
+    for (int i = 0; i < MENU_ITEM_COUNT; i++) {
+        menu_btns[i] = lv_btn_create(scr_menu);
+        lv_obj_set_size(menu_btns[i], 260, btn_h);
+        lv_obj_align(menu_btns[i], LV_ALIGN_TOP_MID, 0, btn_y + i * (btn_h + btn_gap));
+        lv_obj_set_style_bg_color(menu_btns[i], COLOR_SURFACE, 0);
+        lv_obj_set_style_bg_color(menu_btns[i], COLOR_SELECTED, LV_STATE_FOCUSED);
+        lv_obj_set_style_border_width(menu_btns[i], 2, 0);
+        lv_obj_set_style_border_color(menu_btns[i], COLOR_PRIMARY, 0);
+        lv_obj_set_style_border_color(menu_btns[i], COLOR_ACCENT, LV_STATE_FOCUSED);
+        lv_obj_set_style_radius(menu_btns[i], 8, 0);
+        lv_obj_add_event_cb(menu_btns[i], menu_btn_handler, LV_EVENT_CLICKED, NULL);
+
+        menu_labels[i] = lv_label_create(menu_btns[i]);
+        lv_label_set_text(menu_labels[i], menu_texts[i]);
+        lv_obj_set_style_text_color(menu_labels[i], COLOR_TEXT, 0);
+        lv_obj_center(menu_labels[i]);
+    }
+
+    /* Hint text */
+    lv_obj_t *hint = lv_label_create(scr_menu);
+    lv_label_set_text(hint, "GPIO0: Up  |  GPIO43: Down/Enter");
+    lv_obj_set_style_text_color(hint, COLOR_MUTED, 0);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -10);
+
+    /* Focus first item */
+    lv_group_focus_obj(menu_btns[0]);
+}
+
+/* ========== Update Menu Selection Visual ========== */
+static void update_menu_focus(void)
+{
+    for (int i = 0; i < MENU_ITEM_COUNT; i++) {
+        if (i == menu_selection) {
+            lv_obj_add_state(menu_btns[i], LV_STATE_FOCUSED);
+            lv_obj_set_style_bg_color(menu_btns[i], COLOR_SELECTED, 0);
+            lv_obj_set_style_border_color(menu_btns[i], COLOR_ACCENT, 0);
+        } else {
+            lv_obj_clear_state(menu_btns[i], LV_STATE_FOCUSED);
+            lv_obj_set_style_bg_color(menu_btns[i], COLOR_SURFACE, 0);
+            lv_obj_set_style_border_color(menu_btns[i], COLOR_PRIMARY, 0);
+        }
+    }
+}
+
+/* ========== Create Playing Screen ========== */
 static void create_playing_screen(void)
 {
     scr_playing = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr_playing, COLOR_BG, 0);
-    
-    /* Full-screen image object (uses lv_img for direct buffer display) */
+
+    /* Full-screen image */
     img_obj = lv_img_create(scr_playing);
     lv_obj_set_size(img_obj, DISPLAY_WIDTH, DISPLAY_HEIGHT);
     lv_obj_align(img_obj, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_set_style_bg_color(img_obj, lv_color_hex(0x000000), 0);
-    
-    /* Add gesture handler to the playing screen */
-    lv_obj_add_event_cb(scr_playing, playing_scr_gesture_cb, LV_EVENT_ALL, NULL);
-    
-    /* Track label overlay (top-left corner) */
+
+    /* Track label overlay */
     track_label = lv_label_create(scr_playing);
     lv_label_set_text(track_label, "Track 1");
     lv_obj_set_style_text_color(track_label, COLOR_TEXT, 0);
     lv_obj_set_style_bg_color(track_label, lv_color_hex(0x80000000), 0);
     lv_obj_set_style_pad_all(track_label, 4, 0);
     lv_obj_align(track_label, LV_ALIGN_TOP_LEFT, 8, 8);
-    
-    /* Bottom control bar (hidden by default, shown on tap/swipe) */
+
+    /* Bottom control bar (hidden by default) */
     ctrl_bar = lv_obj_create(scr_playing);
     lv_obj_set_size(ctrl_bar, DISPLAY_WIDTH, 50);
     lv_obj_align(ctrl_bar, LV_ALIGN_BOTTOM_MID, 0, 0);
@@ -238,35 +271,32 @@ static void create_playing_screen(void)
     lv_obj_set_style_radius(ctrl_bar, 0, 0);
     lv_obj_add_flag(ctrl_bar, LV_OBJ_FLAG_HIDDEN);
 
-    /* Prev button */
-    btn_prev = lv_btn_create(ctrl_bar);
-    lv_obj_set_size(btn_prev, 50, 36);
-    lv_obj_align(btn_prev, LV_ALIGN_LEFT_MID, 15, 0);
-    lv_obj_set_style_bg_color(btn_prev, COLOR_PRIMARY, 0);
-    lv_obj_t *prev_lbl = lv_label_create(btn_prev);
+    btn_prev_ctrl = lv_btn_create(ctrl_bar);
+    lv_obj_set_size(btn_prev_ctrl, 50, 36);
+    lv_obj_align(btn_prev_ctrl, LV_ALIGN_LEFT_MID, 15, 0);
+    lv_obj_set_style_bg_color(btn_prev_ctrl, COLOR_PRIMARY, 0);
+    lv_obj_t *prev_lbl = lv_label_create(btn_prev_ctrl);
     lv_label_set_text(prev_lbl, LV_SYMBOL_PREV);
     lv_obj_center(prev_lbl);
-    lv_obj_add_event_cb(btn_prev, btn_prev_handler, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_prev_ctrl, btn_prev_handler, LV_EVENT_CLICKED, NULL);
 
-    /* Play/Pause button */
-    btn_play = lv_btn_create(ctrl_bar);
-    lv_obj_set_size(btn_play, 50, 36);
-    lv_obj_align(btn_play, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(btn_play, COLOR_ACCENT, 0);
-    lv_obj_t *play_lbl = lv_label_create(btn_play);
+    btn_play_ctrl = lv_btn_create(ctrl_bar);
+    lv_obj_set_size(btn_play_ctrl, 50, 36);
+    lv_obj_align(btn_play_ctrl, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(btn_play_ctrl, COLOR_ACCENT, 0);
+    lv_obj_t *play_lbl = lv_label_create(btn_play_ctrl);
     lv_label_set_text(play_lbl, LV_SYMBOL_PLAY);
     lv_obj_center(play_lbl);
-    lv_obj_add_event_cb(btn_play, btn_play_handler, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_play_ctrl, btn_play_handler, LV_EVENT_CLICKED, NULL);
 
-    /* Next button */
-    btn_next = lv_btn_create(ctrl_bar);
-    lv_obj_set_size(btn_next, 50, 36);
-    lv_obj_align(btn_next, LV_ALIGN_RIGHT_MID, -15, 0);
-    lv_obj_set_style_bg_color(btn_next, COLOR_PRIMARY, 0);
-    lv_obj_t *next_lbl = lv_label_create(btn_next);
+    btn_next_ctrl = lv_btn_create(ctrl_bar);
+    lv_obj_set_size(btn_next_ctrl, 50, 36);
+    lv_obj_align(btn_next_ctrl, LV_ALIGN_RIGHT_MID, -15, 0);
+    lv_obj_set_style_bg_color(btn_next_ctrl, COLOR_PRIMARY, 0);
+    lv_obj_t *next_lbl = lv_label_create(btn_next_ctrl);
     lv_label_set_text(next_lbl, LV_SYMBOL_NEXT);
     lv_obj_center(next_lbl);
-    lv_obj_add_event_cb(btn_next, btn_next_handler, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_next_ctrl, btn_next_handler, LV_EVENT_CLICKED, NULL);
 }
 
 /* ========== Create Stopped Screen ========== */
@@ -275,20 +305,16 @@ static void create_stopped_screen(void)
     scr_stopped = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr_stopped, COLOR_BG, 0);
 
-    /* STOP label */
     lv_obj_t *stop_label = lv_label_create(scr_stopped);
     lv_label_set_text(stop_label, LV_SYMBOL_STOP);
     lv_obj_set_style_text_color(stop_label, COLOR_ACCENT, 0);
-    lv_obj_set_style_text_font(stop_label, lv_font_default(), 0);
     lv_obj_align(stop_label, LV_ALIGN_CENTER, 0, -30);
 
-    /* Hint text */
     lv_obj_t *stop_hint = lv_label_create(scr_stopped);
-    lv_label_set_text(stop_hint, "Tap Play to start");
+    lv_label_set_text(stop_hint, "Press Play to start");
     lv_obj_set_style_text_color(stop_hint, COLOR_MUTED, 0);
     lv_obj_align(stop_hint, LV_ALIGN_CENTER, 0, 20);
 
-    /* Track info */
     lv_obj_t *track_info = lv_label_create(scr_stopped);
     lv_label_set_text(track_info, "Track 1");
     lv_obj_set_style_text_color(track_info, COLOR_TEXT, 0);
@@ -307,13 +333,11 @@ static void create_settings_panel(void)
     lv_obj_set_style_shadow_width(settings_panel, 20, 0);
     lv_obj_set_style_shadow_color(settings_panel, lv_color_hex(0x000000), 0);
 
-    /* Title */
     lv_obj_t *title = lv_label_create(settings_panel);
     lv_label_set_text(title, "Settings");
     lv_obj_set_style_text_color(title, COLOR_TEXT, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
 
-    /* Volume slider */
     lv_obj_t *vol_title = lv_label_create(settings_panel);
     lv_label_set_text(vol_title, "Volume");
     lv_obj_set_style_text_color(vol_title, COLOR_MUTED, 0);
@@ -333,7 +357,6 @@ static void create_settings_panel(void)
     lv_obj_set_style_text_color(vol_label, COLOR_TEXT, 0);
     lv_obj_align(vol_label, LV_ALIGN_TOP_LEFT, 200, 55);
 
-    /* Brightness slider */
     lv_obj_t *bright_title = lv_label_create(settings_panel);
     lv_label_set_text(bright_title, "Brightness");
     lv_obj_set_style_text_color(bright_title, COLOR_MUTED, 0);
@@ -353,7 +376,6 @@ static void create_settings_panel(void)
     lv_obj_set_style_text_color(bright_label, COLOR_TEXT, 0);
     lv_obj_align(bright_label, LV_ALIGN_TOP_LEFT, 200, 105);
 
-    /* Close button */
     lv_obj_t *close_btn = lv_btn_create(settings_panel);
     lv_obj_set_size(close_btn, 80, 28);
     lv_obj_align(close_btn, LV_ALIGN_BOTTOM_MID, 0, -10);
@@ -373,11 +395,11 @@ void ui_init(void)
     ESP_LOGI(TAG, "Creating UI screens (landscape 320x240)...");
 
     create_welcome_screen();
+    create_menu_screen();
     create_playing_screen();
     create_stopped_screen();
     create_settings_panel();
 
-    /* Show welcome screen by default */
     lv_scr_load(scr_welcome);
     current_state = UI_STATE_WELCOME;
 
@@ -392,6 +414,36 @@ void ui_show_welcome(void)
     }
 }
 
+void ui_show_menu(void)
+{
+    if (scr_menu) {
+        lv_scr_load(scr_menu);
+        current_state = UI_STATE_MENU;
+        menu_selection = MENU_ITEM_PLAY;
+        update_menu_focus();
+    }
+}
+
+void ui_menu_navigate(int8_t direction)
+{
+    if (current_state != UI_STATE_MENU) return;
+    int new_sel = menu_selection + direction;
+    if (new_sel < 0) new_sel = MENU_ITEM_COUNT - 1;
+    if (new_sel >= MENU_ITEM_COUNT) new_sel = 0;
+    menu_selection = (menu_item_t)new_sel;
+    update_menu_focus();
+}
+
+menu_item_t ui_menu_confirm(void)
+{
+    return menu_selection;
+}
+
+menu_item_t ui_menu_get_selection(void)
+{
+    return menu_selection;
+}
+
 void ui_show_playing(uint8_t track)
 {
     if (scr_playing) {
@@ -400,7 +452,6 @@ void ui_show_playing(uint8_t track)
         char buf[16];
         snprintf(buf, sizeof(buf), "Track %d", track);
         lv_label_set_text(track_label, buf);
-        /* Hide settings panel when switching to playing */
         ui_hide_settings();
     }
 }
@@ -416,6 +467,7 @@ void ui_show_stopped(void)
 void ui_show_settings(void)
 {
     if (settings_panel) {
+        prev_state = current_state;
         lv_obj_clear_flag(settings_panel, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(settings_panel);
         current_state = UI_STATE_SETTINGS;
@@ -426,6 +478,7 @@ void ui_hide_settings(void)
 {
     if (settings_panel) {
         lv_obj_add_flag(settings_panel, LV_OBJ_FLAG_HIDDEN);
+        current_state = prev_state;
     }
 }
 
@@ -463,17 +516,15 @@ void ui_set_image(const uint16_t *pixels, uint16_t w, uint16_t h)
     if (!img_obj || !pixels) return;
 
     size_t buf_size = (size_t)w * h * sizeof(lv_color_t);
-    
-    /* Reuse existing buffer if same size, otherwise reallocate */
+
     if (img_buf) {
-        /* Check if current buffer is large enough */
         size_t current_size = (size_t)img_dsc.header.w * img_dsc.header.h * sizeof(lv_color_t);
         if (current_size < buf_size) {
             heap_caps_free(img_buf);
             img_buf = NULL;
         }
     }
-    
+
     if (!img_buf) {
         img_buf = heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!img_buf) {
@@ -491,7 +542,6 @@ void ui_set_image(const uint16_t *pixels, uint16_t w, uint16_t h)
     img_dsc.data_size = buf_size;
     img_dsc.data = (const uint8_t *)img_buf;
 
-    /* Directly set the image source - LVGL renders from buffer, no pixel-by-pixel copy */
     lv_img_set_src(img_obj, &img_dsc);
 }
 
@@ -502,8 +552,8 @@ ui_state_t ui_get_state(void)
 
 void ui_set_play_button_text(bool is_playing)
 {
-    if (btn_play) {
-        lv_obj_t *lbl = lv_obj_get_child(btn_play, 0);
+    if (btn_play_ctrl) {
+        lv_obj_t *lbl = lv_obj_get_child(btn_play_ctrl, 0);
         if (lbl) {
             lv_label_set_text(lbl, is_playing ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
         }
