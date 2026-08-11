@@ -503,7 +503,7 @@ void ui_settings_adjust(int8_t direction)
     if (!settings_panel || lv_obj_has_flag(settings_panel, LV_OBJ_FLAG_HIDDEN)) return;
 
     const int8_t step = 5; /* Adjust by 5% per press */
-    char buf[8];
+    char buf[16]; /* Large enough for any int value */
 
     if (direction > 0) {
         /* GPIO43 short press: increase focused slider */
