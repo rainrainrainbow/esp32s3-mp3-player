@@ -26,7 +26,7 @@ static lv_obj_t *settings_panel = NULL;
 static lv_obj_t *welcome_bar = NULL;
 
 /* Playing screen objects */
-static lv_obj_t *img_canvas = NULL;
+static lv_obj_t *img_obj = NULL;
 static lv_obj_t *track_label = NULL;
 static lv_obj_t *btn_play = NULL;
 static lv_obj_t *btn_prev = NULL;
@@ -210,13 +210,11 @@ static void create_playing_screen(void)
     scr_playing = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr_playing, COLOR_BG, 0);
     
-    /* Full-screen image canvas */
-    img_canvas = lv_canvas_create(scr_playing);
-    lv_obj_set_size(img_canvas, DISPLAY_WIDTH, DISPLAY_HEIGHT);
-    lv_obj_align(img_canvas, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(img_canvas, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_border_width(img_canvas, 0, 0);
-    lv_obj_set_style_radius(img_canvas, 0, 0);
+    /* Full-screen image object (uses lv_img for direct buffer display) */
+    img_obj = lv_img_create(scr_playing);
+    lv_obj_set_size(img_obj, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+    lv_obj_align(img_obj, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(img_obj, lv_color_hex(0x000000), 0);
     
     /* Add gesture handler to the playing screen */
     lv_obj_add_event_cb(scr_playing, playing_scr_gesture_cb, LV_EVENT_ALL, NULL);
@@ -460,20 +458,26 @@ void ui_set_track(uint8_t track)
 
 void ui_set_image(const uint16_t *pixels, uint16_t w, uint16_t h)
 {
-    if (!img_canvas || !pixels) return;
+    if (!img_obj || !pixels) return;
 
     size_t buf_size = (size_t)w * h * sizeof(lv_color_t);
     
-    /* Free old buffer if size changed */
+    /* Reuse existing buffer if same size, otherwise reallocate */
     if (img_buf) {
-        heap_caps_free(img_buf);
-        img_buf = NULL;
+        /* Check if current buffer is large enough */
+        size_t current_size = (size_t)img_dsc.header.w * img_dsc.header.h * sizeof(lv_color_t);
+        if (current_size < buf_size) {
+            heap_caps_free(img_buf);
+            img_buf = NULL;
+        }
     }
     
-    img_buf = heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!img_buf) {
-        ESP_LOGE(TAG, "Failed to allocate image buffer (%zu bytes)", buf_size);
-        return;
+        img_buf = heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!img_buf) {
+            ESP_LOGE(TAG, "Failed to allocate image buffer (%zu bytes)", buf_size);
+            return;
+        }
     }
 
     memcpy(img_buf, pixels, buf_size);
@@ -485,8 +489,8 @@ void ui_set_image(const uint16_t *pixels, uint16_t w, uint16_t h)
     img_dsc.data_size = buf_size;
     img_dsc.data = (const uint8_t *)img_buf;
 
-    lv_canvas_set_buffer(img_canvas, img_buf, w, h, LV_IMG_CF_TRUE_COLOR);
-    lv_canvas_draw_img(img_canvas, 0, 0, &img_dsc, NULL);
+    /* Directly set the image source - LVGL renders from buffer, no pixel-by-pixel copy */
+    lv_img_set_src(img_obj, &img_dsc);
 }
 
 ui_state_t ui_get_state(void)

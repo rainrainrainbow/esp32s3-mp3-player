@@ -152,9 +152,12 @@ static void on_prev(void)
     preload_images_for_track(current_track);
     audio_player_play_track(current_track);
     is_playing = true;
-    ui_show_playing(current_track);
-    if (g_image_cache_count > 0) {
-        ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+    if (lvgl_port_lock(100)) {
+        ui_show_playing(current_track);
+        if (g_image_cache_count > 0) {
+            ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+        }
+        lvgl_port_unlock();
     }
 }
 
@@ -163,15 +166,21 @@ static void on_play(void)
     if (is_playing) {
         audio_player_pause();
         is_playing = false;
-        ui_show_stopped();
+        if (lvgl_port_lock(100)) {
+            ui_show_stopped();
+            lvgl_port_unlock();
+        }
     } else {
         if (max_tracks == 0) return;
         preload_images_for_track(current_track);
         audio_player_play_track(current_track);
         is_playing = true;
-        ui_show_playing(current_track);
-        if (g_image_cache_count > 0) {
-            ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+        if (lvgl_port_lock(100)) {
+            ui_show_playing(current_track);
+            if (g_image_cache_count > 0) {
+                ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+            }
+            lvgl_port_unlock();
         }
     }
 }
@@ -184,9 +193,12 @@ static void on_next(void)
     preload_images_for_track(current_track);
     audio_player_play_track(current_track);
     is_playing = true;
-    ui_show_playing(current_track);
-    if (g_image_cache_count > 0) {
-        ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+    if (lvgl_port_lock(100)) {
+        ui_show_playing(current_track);
+        if (g_image_cache_count > 0) {
+            ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+        }
+        lvgl_port_unlock();
     }
 }
 
@@ -456,7 +468,14 @@ void app_main(void)
 
     load_settings();
 
-    /* Initialize TFT first */
+    /* Initialize audio */
+    audio_player_init();
+    apply_volume();
+
+    /* Play diagnostic test tone BEFORE LVGL starts (no LVGL task interference) */
+    audio_player_play_test_tone();
+
+    /* Initialize TFT */
     tft_init();
     tft_fill_screen(0x0000);
     apply_brightness();
@@ -471,10 +490,6 @@ void app_main(void)
     /* Show welcome screen */
     ui_show_welcome();
     vTaskDelay(pdMS_TO_TICKS(500));
-
-    /* Initialize audio */
-    audio_player_init();
-    apply_volume();
 
     /* Create I2C command queue (depth=10) */
     i2c_cmd_queue = xQueueCreate(10, sizeof(i2c_cmd_t));
@@ -509,15 +524,12 @@ void app_main(void)
         preload_images_for_track(1);
     }
 
-    /* Diagnostic tone */
-    audio_player_play_test_tone();
-
     /* Show stopped screen */
     ui_show_stopped();
 
     /* Create tasks */
     xTaskCreatePinnedToCore(slideshow_task, "slideshow", 8192, NULL, 1, NULL, 1);
-    xTaskCreatePinnedToCore(button_task, "buttons", 16384, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(button_task, "buttons", 32768, NULL, 5, NULL, 1);
     xTaskCreatePinnedToCore(i2c_cmd_task, "i2c_cmd", 8192, NULL, 4, NULL, 1);
 
     ESP_LOGI(TAG, "System ready");
