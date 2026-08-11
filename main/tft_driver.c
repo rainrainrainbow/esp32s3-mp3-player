@@ -159,12 +159,13 @@ void tft_init(void)
     tft_send_cmd(CMD_SLPOUT);
     vTaskDelay(pdMS_TO_TICKS(150));
     
-    // MADCTL for landscape 320x240: MV|MY|BGR = 0x68
-    // MV(0x20) swaps X/Y, MY(0x40) mirrors Y, BGR(0x08)
+    // MADCTL for landscape 320x240: MV|MY = 0x60 (RGB order, no BGR)
+    // MV(0x20) swaps X/Y, MY(0x40) mirrors Y
+    // Note: Removed BGR bit - LVGL uses RGB order by default
     tft_send_cmd(CMD_MADCTL);
-    uint8_t madctl = 0x68;
+    uint8_t madctl = 0x60;
     tft_send_data(&madctl, 1);
-    ESP_LOGI(TAG, "MADCTL = 0x%02X (landscape)", madctl);
+    ESP_LOGI(TAG, "MADCTL = 0x%02X (landscape, RGB order)", madctl);
     
     // COLMOD = 0x55 (16-bit)
     tft_send_cmd(CMD_COLMOD);
