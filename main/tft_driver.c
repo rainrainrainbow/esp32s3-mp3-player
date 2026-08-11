@@ -172,6 +172,9 @@ void tft_init(void)
     uint8_t colmod = 0x05;
     tft_send_data(&colmod, 1);
     
+    // Display Inversion ON (0x21) - Required for many ST7789 IPS panels
+    tft_send_cmd(0x21); 
+    
     // DISPON
     tft_send_cmd(CMD_DISPON);
     vTaskDelay(pdMS_TO_TICKS(50));
