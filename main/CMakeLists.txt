@@ -7,6 +7,9 @@ set(COMPONENT_SRCS
     "minimp3.c"
     "usb_msc.c"
     "i2c_slave.c"
+    "lvgl_port.c"
+    "touch_driver.c"
+    "ui_main.c"
 )
 set(COMPONENT_ADD_INCLUDEDIRS ".")
 set(COMPONENT_REQUIRES
@@ -20,5 +23,6 @@ set(COMPONENT_REQUIRES
     esp_timer
     tinyusb
     esp_jpeg
+    lvgl
 )
 register_component()

@@ -46,6 +46,15 @@
 #define I2C_SLAVE_ADDR       0x52
 #define I2C_SLAVE_PORT       I2C_NUM_0
 
+/* ========== Touch Screen Configuration ========== */
+// FT5x06 (I2C capacitive touch)
+#define TOUCH_I2C_SDA        GPIO_NUM_8
+#define TOUCH_I2C_SCL        GPIO_NUM_9
+#define TOUCH_I2C_PORT       I2C_NUM_1
+#define TOUCH_I2C_ADDR       0x38
+#define TOUCH_IRQ_GPIO       GPIO_NUM_7
+#define TOUCH_RST_GPIO       GPIO_NUM_6
+
 /* I2C Slave Registers */
 #define REG_PLAY_TRACK       0x01  // Write: select track 1-255
 #define REG_PLAY_STATUS      0x02  // Read: 0=stopped, 1=playing, 2=paused
