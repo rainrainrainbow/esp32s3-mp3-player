@@ -324,14 +324,17 @@ static void create_stopped_screen(void)
 /* ========== Create Settings Panel ========== */
 static void create_settings_panel(void)
 {
-    settings_panel = lv_obj_create(lv_scr_act());
+    /* Use lv_layer_top() so settings panel is always visible above any screen */
+    settings_panel = lv_obj_create(lv_layer_top());
     lv_obj_set_size(settings_panel, DISPLAY_WIDTH - 20, 180);
     lv_obj_align(settings_panel, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(settings_panel, COLOR_SURFACE, 0);
     lv_obj_set_style_radius(settings_panel, 10, 0);
-    lv_obj_set_style_border_width(settings_panel, 0, 0);
+    lv_obj_set_style_border_width(settings_panel, 2, 0);
+    lv_obj_set_style_border_color(settings_panel, COLOR_ACCENT, 0);
     lv_obj_set_style_shadow_width(settings_panel, 20, 0);
     lv_obj_set_style_shadow_color(settings_panel, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_pad_all(settings_panel, 5, 0);
 
     lv_obj_t *title = lv_label_create(settings_panel);
     lv_label_set_text(title, "Settings");

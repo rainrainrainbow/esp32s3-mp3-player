@@ -437,33 +437,29 @@ static void button_task(void *param)
             while (gpio_get_level(GPIO_NUM_0) == 0) vTaskDelay(pdMS_TO_TICKS(20));
 
             if (long_press) {
-                /* Long press: USB mode switch from any screen */
                 on_usb_mode();
             } else {
-                /* Short press: context-dependent */
                 ui_state_t state = ui_get_state();
-                if (state == UI_STATE_MENU) {
-                    /* Menu: navigate up */
+                if (state == UI_STATE_SETTINGS) {
+                    /* Settings: close and return to previous screen */
+                    if (lvgl_port_lock(100)) {
+                        ui_hide_settings();
+                        lvgl_port_unlock();
+                    }
+                } else if (state == UI_STATE_MENU) {
                     if (lvgl_port_lock(100)) {
                         ui_menu_navigate(-1);
                         lvgl_port_unlock();
                     }
                 } else if (state == UI_STATE_PLAYING || state == UI_STATE_STOPPED) {
-                    /* Playing/Stopped: previous track */
                     on_prev();
-                } else if (state == UI_STATE_SETTINGS) {
-                    /* Settings: close and return */
-                    if (lvgl_port_lock(100)) {
-                        ui_hide_settings();
-                        lvgl_port_unlock();
-                    }
                 }
             }
-            vTaskDelay(pdMS_TO_TICKS(80));
+            vTaskDelay(pdMS_TO_TICKS(150));
             continue;
         }
 
-        /* GPIO43: Down+Enter / Next / Settings(long) */
+        /* GPIO43: Down+Enter / Next / Toggle Settings(long) */
         if (gpio_get_level(GPIO_NUM_43) == 0) {
             TickType_t pressed_at = xTaskGetTickCount();
             bool long_press = false;
@@ -474,9 +470,16 @@ static void button_task(void *param)
             while (gpio_get_level(GPIO_NUM_43) == 0) vTaskDelay(pdMS_TO_TICKS(20));
 
             if (long_press) {
-                /* Long press: open settings from playing/stopped/menu */
+                /* Long press: toggle settings overlay */
                 ui_state_t state = ui_get_state();
-                if (state != UI_STATE_WELCOME && state != UI_STATE_SETTINGS) {
+                if (state == UI_STATE_SETTINGS) {
+                    /* Already in settings, close it */
+                    if (lvgl_port_lock(100)) {
+                        ui_hide_settings();
+                        lvgl_port_unlock();
+                    }
+                } else if (state != UI_STATE_WELCOME) {
+                    /* Open settings from menu/playing/stopped */
                     if (lvgl_port_lock(100)) {
                         ui_show_settings();
                         lvgl_port_unlock();
@@ -485,11 +488,11 @@ static void button_task(void *param)
             } else {
                 /* Short press: context-dependent */
                 ui_state_t state = ui_get_state();
-                if (state == UI_STATE_MENU) {
-                    /* Menu: confirm selection */
+                if (state == UI_STATE_SETTINGS) {
+                    /* In settings: do nothing (use GPIO0 to close) */
+                } else if (state == UI_STATE_MENU) {
                     menu_item_t sel = ui_menu_confirm();
                     if (sel == MENU_ITEM_PLAY) {
-                        /* Start playback */
                         if (max_tracks > 0) {
                             preload_images_for_track(current_track);
                             audio_player_play_track(current_track);
@@ -511,12 +514,10 @@ static void button_task(void *param)
                         }
                     }
                 } else if (state == UI_STATE_PLAYING || state == UI_STATE_STOPPED) {
-                    /* Playing/Stopped: next track */
                     on_next();
                 }
-                /* Settings: short press does nothing (use sliders/close button) */
             }
-            vTaskDelay(pdMS_TO_TICKS(80));
+            vTaskDelay(pdMS_TO_TICKS(150));
             continue;
         }
 
