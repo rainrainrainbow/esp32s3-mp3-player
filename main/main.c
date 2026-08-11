@@ -333,6 +333,10 @@ static void slideshow_task(void *param)
                     tft_show_rgb565(img->pixels, img->width, img->height);
                 }
                 img_index = (img_index + 1) % g_image_cache_count;
+            } else {
+                // No images available - show placeholder
+                display_playing(track);
+                draw_string(24, 140, "No image found", 0xF800);
             }
         } else {
             display_stop();

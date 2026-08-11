@@ -211,6 +211,13 @@ static bool decode_jpeg(const char *filepath, uint16_t target_w, uint16_t target
     }
     ESP_LOGI(TAG, "JPEG: %dx%d -> %dx%d", src_w, src_h, target_w, target_h);
 
+    // Sanity check dimensions to avoid huge allocations
+    if (src_w <= 0 || src_h <= 0 || src_w > 4096 || src_h > 4096) {
+        ESP_LOGE(TAG, "Invalid JPEG dimensions: %dx%d", src_w, src_h);
+        free(jpeg_data);
+        return false;
+    }
+
     // Allocate output buffer for full-size decode (RGB565 = 2 bytes/pixel)
     size_t full_size = (size_t)src_w * src_h * 2;
     uint16_t *full_buf = heap_caps_malloc(full_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -284,6 +291,12 @@ static bool decode_jpeg(const char *filepath, uint16_t target_w, uint16_t target
 
 bool decode_image_file(const char *filepath, uint16_t target_width, uint16_t target_height, decoded_image_t *out_image)
 {
+    if (!out_image) return false;
+    out_image->pixels = NULL;
+    out_image->width = 0;
+    out_image->height = 0;
+    out_image->format = IMG_FMT_UNKNOWN;
+
     image_format_t fmt = detect_image_format(filepath);
     if (fmt == IMG_FMT_UNKNOWN) {
         ESP_LOGE(TAG, "Unknown image format: %s", filepath);
