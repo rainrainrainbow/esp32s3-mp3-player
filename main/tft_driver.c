@@ -159,13 +159,13 @@ void tft_init(void)
     tft_send_cmd(CMD_SLPOUT);
     vTaskDelay(pdMS_TO_TICKS(150));
     
-    // MADCTL for landscape 320x240: MV|MY|BGR = 0x68
-    // MV(0x20) swaps X/Y, MY(0x40) mirrors Y, BGR(0x08) for correct color order
-    // With byte-swap in DMA buffer, TFT expects BGR format
+    // MADCTL for landscape 320x240: MV|MY = 0x60 (RGB order, no BGR)
+    // MV(0x20) swaps X/Y, MY(0x40) mirrors Y
+    // No byte-swap in DMA buffer, so LVGL RGB565 goes directly to TFT
     tft_send_cmd(CMD_MADCTL);
-    uint8_t madctl = 0x68;
+    uint8_t madctl = 0x60;
     tft_send_data(&madctl, 1);
-    ESP_LOGI(TAG, "MADCTL = 0x%02X (landscape, BGR order)", madctl);
+    ESP_LOGI(TAG, "MADCTL = 0x%02X (landscape, RGB order, no byte-swap)", madctl);
     
     // COLMOD = 0x55 (16-bit)
     tft_send_cmd(CMD_COLMOD);
@@ -325,10 +325,8 @@ void tft_show_rgb565_area(const uint16_t *pixels, uint16_t width, uint16_t heigh
     while (total > 0) {
         size_t chunk = (total > DMA_BUFFER_SIZE) ? DMA_BUFFER_SIZE : total;
 
-        // Byte-swap into DMA buffer for SPI big-endian
-        for (size_t i = 0; i < chunk; i++) {
-            dma_buffer[i] = ((src[i] >> 8) & 0xFF) | ((src[i] & 0xFF) << 8);
-        }
+        // Direct copy - no byte swap needed with proper MADCTL config
+        memcpy(dma_buffer, src, chunk * sizeof(uint16_t));
 
         spi_transaction_t t = {
             .length = chunk * 16,
