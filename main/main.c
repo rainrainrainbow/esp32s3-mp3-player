@@ -139,6 +139,10 @@ static void preload_images_for_track(uint8_t track)
     g_cached_track = track;
 }
 
+/* ========== Forward Declarations ========== */
+static uint8_t scan_mp3_tracks(void);
+static void preload_images_for_track(uint8_t track);
+
 /* ========== UI Callbacks ========== */
 static uint8_t max_tracks = 0;
 static uint8_t current_track = 1;
