@@ -204,52 +204,102 @@ static void on_brightness_change(uint8_t bright)
     save_settings();
 }
 
-/* ========== I2C Callbacks ========== */
+/* ========== I2C Command Queue ========== */
+typedef struct {
+    uint8_t type; // 1=play, 2=stop, 3=volume, 4=brightness
+    uint8_t value;
+} i2c_cmd_t;
+
+static QueueHandle_t i2c_cmd_queue = NULL;
+
+/* ========== I2C Callbacks (lightweight - just enqueue) ========== */
 static void i2c_play_track_callback(uint8_t track)
 {
-    ESP_LOGI(TAG, "I2C: Play track %d", track);
-    current_track = track;
-    preload_images_for_track(track);
-    audio_player_play_track(track);
-    is_playing = true;
-    if (lvgl_port_lock(100)) {
-        ui_show_playing(track);
-        if (g_image_cache_count > 0) {
-            ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
-        }
-        lvgl_port_unlock();
-    }
+    ESP_LOGI(TAG, "I2C: Play track %d (queued)", track);
+    i2c_cmd_t cmd = { .type = 1, .value = track };
+    if (i2c_cmd_queue) xQueueSend(i2c_cmd_queue, &cmd, 0);
 }
 
 static void i2c_stop_callback(void)
 {
-    audio_player_stop();
-    is_playing = false;
-    if (lvgl_port_lock(100)) {
-        ui_show_stopped();
-        lvgl_port_unlock();
-    }
+    ESP_LOGI(TAG, "I2C: Stop (queued)");
+    i2c_cmd_t cmd = { .type = 2, .value = 0 };
+    if (i2c_cmd_queue) xQueueSend(i2c_cmd_queue, &cmd, 0);
 }
 
 static void i2c_volume_callback(uint8_t volume)
 {
-    g_volume = volume;
-    apply_volume();
-    save_settings();
-    if (lvgl_port_lock(100)) {
-        ui_set_volume(volume);
-        lvgl_port_unlock();
-    }
+    ESP_LOGI(TAG, "I2C: Volume %d (queued)", volume);
+    i2c_cmd_t cmd = { .type = 3, .value = volume };
+    if (i2c_cmd_queue) xQueueSend(i2c_cmd_queue, &cmd, 0);
 }
 
 static void i2c_brightness_callback(uint8_t brightness)
 {
-    g_brightness = brightness;
-    apply_brightness();
-    save_settings();
-    if (lvgl_port_lock(100)) {
-        ui_set_brightness(brightness);
-        lvgl_port_unlock();
+    ESP_LOGI(TAG, "I2C: Brightness %d (queued)", brightness);
+    i2c_cmd_t cmd = { .type = 4, .value = brightness };
+    if (i2c_cmd_queue) xQueueSend(i2c_cmd_queue, &cmd, 0);
+}
+
+/* ========== I2C Command Handler Task ========== */
+static void i2c_cmd_task(void *param)
+{
+    (void)param;
+    i2c_cmd_t cmd;
+
+    while (1) {
+        if (xQueueReceive(i2c_cmd_queue, &cmd, portMAX_DELAY)) {
+            switch (cmd.type) {
+                case 1: { // Play track
+                    uint8_t track = cmd.value;
+                    ESP_LOGI(TAG, "I2C CMD: Play track %d", track);
+                    current_track = track;
+                    preload_images_for_track(track);
+                    audio_player_play_track(track);
+                    is_playing = true;
+                    if (lvgl_port_lock(100)) {
+                        ui_show_playing(track);
+                        if (g_image_cache_count > 0) {
+                            ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+                        }
+                        lvgl_port_unlock();
+                    }
+                    break;
+                }
+                case 2: { // Stop
+                    ESP_LOGI(TAG, "I2C CMD: Stop");
+                    audio_player_stop();
+                    is_playing = false;
+                    if (lvgl_port_lock(100)) {
+                        ui_show_stopped();
+                        lvgl_port_unlock();
+                    }
+                    break;
+                }
+                case 3: { // Volume
+                    ESP_LOGI(TAG, "I2C CMD: Volume %d", cmd.value);
+                    g_volume = cmd.value;
+                    apply_volume();
+                    save_settings();
+                    if (lvgl_port_lock(100)) {
+                        ui_set_volume(cmd.value);
+                        lvgl_port_unlock();
+                    }
+                    break;
+                }
+                case 4: { // Brightness
+                    ESP_LOGI(TAG, "I2C CMD: Brightness %d", cmd.value);
+                    g_brightness = cmd.value;
+                    apply_brightness();
+                    save_settings();
+                    if (lvgl_port_lock(100)) {
+                        ui_set_brightness(cmd.value);
+                        lvgl_port_unlock();
+                    }
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -426,6 +476,13 @@ void app_main(void)
     audio_player_init();
     apply_volume();
 
+    /* Create I2C command queue (depth=10) */
+    i2c_cmd_queue = xQueueCreate(10, sizeof(i2c_cmd_t));
+    if (!i2c_cmd_queue) {
+        ESP_LOGE(TAG, "Failed to create I2C command queue");
+        while (1) vTaskDelay(portMAX_DELAY);
+    }
+
     /* Initialize I2C Slave */
     i2c_slave_init();
     i2c_slave_set_callbacks(i2c_play_track_callback, i2c_stop_callback,
@@ -461,6 +518,7 @@ void app_main(void)
     /* Create tasks */
     xTaskCreatePinnedToCore(slideshow_task, "slideshow", 8192, NULL, 1, NULL, 1);
     xTaskCreatePinnedToCore(button_task, "buttons", 16384, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(i2c_cmd_task, "i2c_cmd", 8192, NULL, 4, NULL, 1);
 
     ESP_LOGI(TAG, "System ready");
     ESP_LOGI(TAG, "GPIO0=Prev/USB, GPIO43=Next/Settings");
