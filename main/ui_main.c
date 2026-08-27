@@ -293,33 +293,33 @@ static void create_menu_screen(void)
     lv_obj_set_style_text_color(hint, COLOR_MUTED, 0);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -10);
 
-    /* Task buttons - positioned below hint text */
+    /* Task buttons - positioned above hint text */
     btn_task1 = lv_btn_create(scr_menu);
-    lv_obj_set_size(btn_task1, 100, 35);
-    lv_obj_align(btn_task1, LV_ALIGN_BOTTOM_LEFT, 20, -55);
+    lv_obj_set_size(btn_task1, 90, 30);
+    lv_obj_align(btn_task1, LV_ALIGN_BOTTOM_LEFT, 15, -80);
     lv_obj_set_style_bg_color(btn_task1, COLOR_PRIMARY, 0);
     lv_obj_set_style_bg_color(btn_task1, COLOR_ACCENT, LV_STATE_FOCUSED);
     lv_obj_add_event_cb(btn_task1, btn_task1_handler, LV_EVENT_CLICKED, NULL);
     
     lv_obj_t *lbl_task1 = lv_label_create(btn_task1);
-    lv_label_set_text(lbl_task1, "TASK 1");
+    lv_label_set_text(lbl_task1, "T1");
     lv_obj_center(lbl_task1);
     
     btn_task2 = lv_btn_create(scr_menu);
-    lv_obj_set_size(btn_task2, 100, 35);
-    lv_obj_align(btn_task2, LV_ALIGN_BOTTOM_RIGHT, -20, -55);
+    lv_obj_set_size(btn_task2, 90, 30);
+    lv_obj_align(btn_task2, LV_ALIGN_BOTTOM_RIGHT, -15, -80);
     lv_obj_set_style_bg_color(btn_task2, COLOR_PRIMARY, 0);
     lv_obj_set_style_bg_color(btn_task2, COLOR_ACCENT, LV_STATE_FOCUSED);
     lv_obj_add_event_cb(btn_task2, btn_task2_handler, LV_EVENT_CLICKED, NULL);
     
     lv_obj_t *lbl_task2 = lv_label_create(btn_task2);
-    lv_label_set_text(lbl_task2, "TASK 2");
+    lv_label_set_text(lbl_task2, "T2");
     lv_obj_center(lbl_task2);
     
     status_label = lv_label_create(scr_menu);
     lv_label_set_text(status_label, "Ready");
     lv_obj_set_style_text_color(status_label, COLOR_MUTED, 0);
-    lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID, 0, -50);
 
     /* Focus first item */
     lv_group_focus_obj(menu_btns[0]);
