@@ -11,7 +11,9 @@
 /* UI states */
 typedef enum {
     UI_STATE_WELCOME = 0,
-    UI_STATE_MENU,        /* Main menu: Task1 / Task2 / Settings */
+    UI_STATE_MENU,        /* Main menu: Play / Task1 / Task2 / USB / Settings */
+    UI_STATE_PLAYING,     /* Music playing with slideshow */
+    UI_STATE_STOPPED,     /* Music stopped */
     UI_STATE_TASK_RUNNING, /* Task running with startup image */
     UI_STATE_SETTINGS
 } ui_state_t;
@@ -69,6 +71,26 @@ menu_item_t ui_menu_confirm(void);
  * @brief Get current menu selection
  */
 menu_item_t ui_menu_get_selection(void);
+
+/**
+ * @brief Show playing screen with track number and first image
+ */
+void ui_show_playing(uint8_t track);
+
+/**
+ * @brief Show stopped screen
+ */
+void ui_show_stopped(void);
+
+/**
+ * @brief Set image to display in playing screen (RGB565 buffer, for slideshow)
+ */
+void ui_set_image(const uint16_t *pixels, uint16_t w, uint16_t h);
+
+/**
+ * @brief Update current track display
+ */
+void ui_set_track(uint8_t track);
 
 /**
  * @brief Show task running screen with startup image (0.png)

@@ -19,6 +19,8 @@ static ui_state_t current_state = UI_STATE_WELCOME;
 /* UI object pointers */
 static lv_obj_t *scr_welcome = NULL;
 static lv_obj_t *scr_menu = NULL;
+static lv_obj_t *scr_playing = NULL;    /* Music playing screen */
+static lv_obj_t *scr_stopped = NULL;    /* Music stopped screen */
 static lv_obj_t *scr_task_running = NULL;
 static lv_obj_t *settings_panel = NULL;
 
@@ -26,11 +28,22 @@ static lv_obj_t *settings_panel = NULL;
 static lv_obj_t *welcome_bar = NULL;
 
 /* Menu objects */
+static lv_obj_t *btn_play = NULL;       /* Play/Pause button in menu */
+static lv_obj_t *btn_prev = NULL;       /* Previous track */
+static lv_obj_t *btn_next = NULL;       /* Next track */
 static lv_obj_t *btn_task1 = NULL;
 static lv_obj_t *btn_task2 = NULL;
 static lv_obj_t *btn_usb = NULL;
 static lv_obj_t *btn_settings = NULL;
 static lv_obj_t *status_label = NULL;
+
+/* Playing screen objects */
+static lv_obj_t *play_img_obj = NULL;   /* Image display during playback */
+static lv_obj_t *track_label = NULL;    /* Track number label */
+static lv_obj_t *play_status_label = NULL; /* Playing status */
+
+/* Stopped screen objects */
+static lv_obj_t *stopped_label = NULL;
 
 /* Task running screen objects */
 static lv_obj_t *task_img_obj = NULL;
@@ -42,11 +55,16 @@ static lv_obj_t *bright_slider = NULL;
 static lv_obj_t *vol_label = NULL;
 static lv_obj_t *bright_label = NULL;
 
-/* Image buffer for task screen */
-static lv_color_t *task_img_buf = NULL;
+/* Image buffers */
+static lv_color_t *play_img_buf = NULL;      /* Buffer for slideshow images */
+static lv_img_dsc_t play_img_dsc = {0};
+static lv_color_t *task_img_buf = NULL;      /* Buffer for task startup image */
 static lv_img_dsc_t task_img_dsc = {0};
 
 /* Callbacks */
+static void (*on_prev_cb)(void) = NULL;
+static void (*on_play_cb)(void) = NULL;
+static void (*on_next_cb)(void) = NULL;
 static void (*on_task1_cb)(void) = NULL;
 static void (*on_task2_cb)(void) = NULL;
 static void (*on_usb_cb)(void) = NULL;
@@ -69,14 +87,16 @@ static uint8_t settings_focus = 0;
 #define COLOR_SELECTED lv_color_hex(0x2D5F8A)
 
 /* ========== Callback Setters ========== */
-void ui_set_callbacks(void (*task1)(void), void (*task2)(void), void (*usb)(void),
-                      void (*vol)(uint8_t), void (*bright)(uint8_t))
+void ui_set_callbacks(void (*prev)(void), void (*play)(void), void (*next)(void),
+                      void (*vol)(uint8_t), void (*bright)(uint8_t),
+                      void (*usb)(void))
 {
-    on_task1_cb = task1;
-    on_task2_cb = task2;
-    on_usb_cb = usb;
+    on_prev_cb = prev;
+    on_play_cb = play;
+    on_next_cb = next;
     on_vol_change_cb = vol;
     on_bright_change_cb = bright;
+    on_usb_cb = usb;
 }
 
 void ui_set_task_callbacks(ui_task_btn_cb_t task1_cb, ui_task_btn_cb_t task2_cb)
@@ -86,6 +106,24 @@ void ui_set_task_callbacks(ui_task_btn_cb_t task1_cb, ui_task_btn_cb_t task2_cb)
 }
 
 /* ========== Button Handlers ========== */
+static void btn_prev_handler(lv_event_t *e)
+{
+    (void)e;
+    if (on_prev_cb) on_prev_cb();
+}
+
+static void btn_play_handler(lv_event_t *e)
+{
+    (void)e;
+    if (on_play_cb) on_play_cb();
+}
+
+static void btn_next_handler(lv_event_t *e)
+{
+    (void)e;
+    if (on_next_cb) on_next_cb();
+}
+
 static void btn_task1_handler(lv_event_t *e)
 {
     (void)e;
@@ -243,6 +281,53 @@ static void create_menu_screen(void)
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -5);
 }
 
+/* ========== Create Playing Screen ========== */
+static void create_playing_screen(void)
+{
+    scr_playing = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr_playing, COLOR_BG, 0);
+
+    /* Full-screen image display */
+    play_img_obj = lv_img_create(scr_playing);
+    lv_obj_set_size(play_img_obj, DISPLAY_WIDTH, DISPLAY_HEIGHT);
+    lv_obj_align(play_img_obj, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(play_img_obj, lv_color_hex(0x000000), 0);
+
+    /* Track number label */
+    track_label = lv_label_create(scr_playing);
+    lv_label_set_text(track_label, "Track: 1");
+    lv_obj_set_style_text_color(track_label, COLOR_TEXT, 0);
+    lv_obj_set_style_bg_color(track_label, lv_color_hex(0x80000000), 0);
+    lv_obj_set_style_pad_all(track_label, 6, 0);
+    lv_obj_align(track_label, LV_ALIGN_TOP_LEFT, 10, 10);
+
+    /* Playing status */
+    play_status_label = lv_label_create(scr_playing);
+    lv_label_set_text(play_status_label, LV_SYMBOL_PLAY " Playing");
+    lv_obj_set_style_text_color(play_status_label, COLOR_ACCENT, 0);
+    lv_obj_set_style_bg_color(play_status_label, lv_color_hex(0x80000000), 0);
+    lv_obj_set_style_pad_all(play_status_label, 6, 0);
+    lv_obj_align(play_status_label, LV_ALIGN_TOP_RIGHT, -10, 10);
+}
+
+/* ========== Create Stopped Screen ========== */
+static void create_stopped_screen(void)
+{
+    scr_stopped = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr_stopped, COLOR_BG, 0);
+
+    stopped_label = lv_label_create(scr_stopped);
+    lv_label_set_text(stopped_label, LV_SYMBOL_PAUSE " Stopped");
+    lv_obj_set_style_text_color(stopped_label, COLOR_TEXT, 0);
+    lv_obj_set_style_text_font(stopped_label, &lv_font_montserrat_28, 0);
+    lv_obj_align(stopped_label, LV_ALIGN_CENTER, 0, 0);
+
+    lv_obj_t *hint = lv_label_create(scr_stopped);
+    lv_label_set_text(hint, "Press Play to resume");
+    lv_obj_set_style_text_color(hint, COLOR_MUTED, 0);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -20);
+}
+
 /* ========== Create Task Running Screen ========== */
 static void create_task_running_screen(void)
 {
@@ -347,6 +432,8 @@ void ui_init(void)
 
     create_welcome_screen();
     create_menu_screen();
+    create_playing_screen();
+    create_stopped_screen();
     create_task_running_screen();
     create_settings_panel();
 
@@ -533,6 +620,76 @@ void ui_set_task_status(const char *text)
 {
     if (task_status_label) {
         lv_label_set_text(task_status_label, text);
+    }
+}
+
+/* ========== Playing Screen API ========== */
+
+void ui_show_playing(uint8_t track)
+{
+    if (scr_playing) {
+        lv_scr_load(scr_playing);
+        current_state = UI_STATE_PLAYING;
+        
+        char buf[32];
+        snprintf(buf, sizeof(buf), "Track: %d", track);
+        if (track_label) {
+            lv_label_set_text(track_label, buf);
+        }
+        if (play_status_label) {
+            lv_label_set_text(play_status_label, LV_SYMBOL_PLAY " Playing");
+        }
+    }
+}
+
+void ui_show_stopped(void)
+{
+    if (scr_stopped) {
+        lv_scr_load(scr_stopped);
+        current_state = UI_STATE_STOPPED;
+    }
+}
+
+void ui_set_image(const uint16_t *pixels, uint16_t w, uint16_t h)
+{
+    if (!play_img_obj || !pixels) return;
+
+    size_t buf_size = (size_t)w * h * sizeof(lv_color_t);
+
+    if (play_img_buf) {
+        size_t current_size = (size_t)play_img_dsc.header.w * play_img_dsc.header.h * sizeof(lv_color_t);
+        if (current_size < buf_size) {
+            heap_caps_free(play_img_buf);
+            play_img_buf = NULL;
+        }
+    }
+
+    if (!play_img_buf) {
+        play_img_buf = heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!play_img_buf) {
+            ESP_LOGE(TAG, "Failed to allocate play image buffer (%zu bytes)", buf_size);
+            return;
+        }
+    }
+
+    memcpy(play_img_buf, pixels, buf_size);
+
+    play_img_dsc.header.always_zero = 0;
+    play_img_dsc.header.w = w;
+    play_img_dsc.header.h = h;
+    play_img_dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
+    play_img_dsc.data_size = buf_size;
+    play_img_dsc.data = (const uint8_t *)play_img_buf;
+
+    lv_img_set_src(play_img_obj, &play_img_dsc);
+}
+
+void ui_set_track(uint8_t track)
+{
+    if (track_label) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "Track: %d", track);
+        lv_label_set_text(track_label, buf);
     }
 }
 

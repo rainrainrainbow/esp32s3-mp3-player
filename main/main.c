@@ -148,6 +148,64 @@ static uint8_t max_tracks = 0;
 static uint8_t current_track = 1;
 static bool is_playing = false;
 
+static void on_prev(void)
+{
+    if (max_tracks == 0) return;
+    current_track = (current_track <= 1) ? max_tracks : current_track - 1;
+    ESP_LOGI(TAG, "Prev track %u", current_track);
+    preload_images_for_track(current_track);
+    audio_player_play_track(current_track);
+    is_playing = true;
+    if (lvgl_port_lock(100)) {
+        ui_show_playing(current_track);
+        if (g_image_cache_count > 0) {
+            ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+        }
+        lvgl_port_unlock();
+    }
+}
+
+static void on_play(void)
+{
+    if (is_playing) {
+        audio_player_pause();
+        is_playing = false;
+        if (lvgl_port_lock(100)) {
+            ui_show_stopped();
+            lvgl_port_unlock();
+        }
+    } else {
+        if (max_tracks == 0) return;
+        preload_images_for_track(current_track);
+        audio_player_play_track(current_track);
+        is_playing = true;
+        if (lvgl_port_lock(100)) {
+            ui_show_playing(current_track);
+            if (g_image_cache_count > 0) {
+                ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+            }
+            lvgl_port_unlock();
+        }
+    }
+}
+
+static void on_next(void)
+{
+    if (max_tracks == 0) return;
+    current_track = (current_track >= max_tracks) ? 1 : current_track + 1;
+    ESP_LOGI(TAG, "Next track %u", current_track);
+    preload_images_for_track(current_track);
+    audio_player_play_track(current_track);
+    is_playing = true;
+    if (lvgl_port_lock(100)) {
+        ui_show_playing(current_track);
+        if (g_image_cache_count > 0) {
+            ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+        }
+        lvgl_port_unlock();
+    }
+}
+
 static void on_volume_change(uint8_t vol)
 {
     g_volume = vol;
@@ -231,13 +289,30 @@ static void i2c_cmd_task(void *param)
     while (1) {
         if (xQueueReceive(i2c_cmd_queue, &cmd, portMAX_DELAY)) {
             switch (cmd.type) {
-                case 1: { // Play track (legacy - not used in new UI)
+                case 1: { // Play track
                     uint8_t track = cmd.value;
-                    ESP_LOGI(TAG, "I2C CMD: Play track %d (ignored in new UI)", track);
+                    ESP_LOGI(TAG, "I2C CMD: Play track %d", track);
+                    current_track = track;
+                    preload_images_for_track(track);
+                    audio_player_play_track(track);
+                    is_playing = true;
+                    if (lvgl_port_lock(100)) {
+                        ui_show_playing(track);
+                        if (g_image_cache_count > 0) {
+                            ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+                        }
+                        lvgl_port_unlock();
+                    }
                     break;
                 }
-                case 2: { // Stop (legacy - not used in new UI)
-                    ESP_LOGI(TAG, "I2C CMD: Stop (ignored in new UI)");
+                case 2: { // Stop
+                    ESP_LOGI(TAG, "I2C CMD: Stop");
+                    audio_player_stop();
+                    is_playing = false;
+                    if (lvgl_port_lock(100)) {
+                        ui_show_stopped();
+                        lvgl_port_unlock();
+                    }
                     break;
                 }
                 case 3: { // Volume
@@ -267,7 +342,38 @@ static void i2c_cmd_task(void *param)
     }
 }
 
-/* ========== Slideshow Task (removed in new UI) ========== */
+/* ========== Slideshow Task ========== */
+static void slideshow_task(void *param)
+{
+    int img_index = 0;
+    uint8_t prev_track = 0;
+
+    while (1) {
+        if (is_playing && audio_player_get_state() == PLAYER_STATE_PLAYING) {
+            uint8_t track = audio_player_get_current_track();
+            if (track != prev_track) {
+                prev_track = track;
+                img_index = 0;
+                i2c_slave_set_current_track(track);
+                i2c_slave_set_status(STATUS_PLAYING);
+            }
+
+            if (g_image_cache_count > 0 && g_image_cache[img_index].pixels) {
+                if (lvgl_port_lock(100)) {
+                    ui_set_image(g_image_cache[img_index].pixels,
+                                 g_image_cache[img_index].width,
+                                 g_image_cache[img_index].height);
+                    lvgl_port_unlock();
+                }
+                img_index = (img_index + 1) % g_image_cache_count;
+            }
+        } else {
+            prev_track = 0;
+            i2c_slave_set_status(STATUS_STOPPED);
+        }
+        vTaskDelay(pdMS_TO_TICKS(5000));
+    }
+}
 
 static uint8_t scan_mp3_tracks(void)
 {
@@ -467,8 +573,8 @@ void app_main(void)
     lvgl_port_init();
     ui_init();
 
-    /* Set UI callbacks for new simplified UI */
-    ui_set_callbacks(on_task1_btn, on_task2_btn, on_usb_mode, on_volume_change, on_brightness_change);
+    /* Set UI callbacks - includes both music control and task buttons */
+    ui_set_callbacks(on_prev, on_play, on_next, on_volume_change, on_brightness_change, on_usb_mode);
 
     /* Show welcome screen */
     ui_show_welcome();
@@ -516,6 +622,7 @@ void app_main(void)
     /* Create tasks */
     xTaskCreatePinnedToCore(button_task, "buttons", 8192, NULL, 5, NULL, 1);
     xTaskCreatePinnedToCore(i2c_cmd_task, "i2c_cmd", 8192, NULL, 4, NULL, 1);
+    xTaskCreatePinnedToCore(slideshow_task, "slideshow", 8192, NULL, 3, NULL, 1);
 
     ESP_LOGI(TAG, "System ready");
     ESP_LOGI(TAG, "GPIO0: Exit task | GPIO43: Settings");
