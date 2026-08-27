@@ -267,38 +267,7 @@ static void i2c_cmd_task(void *param)
     }
 }
 
-/* ========== Slideshow Task ========== */
-static void slideshow_task(void *param)
-{
-    int img_index = 0;
-    uint8_t prev_track = 0;
-
-    while (1) {
-        if (is_playing && audio_player_get_state() == PLAYER_STATE_PLAYING) {
-            uint8_t track = audio_player_get_current_track();
-            if (track != prev_track) {
-                prev_track = track;
-                img_index = 0;
-                i2c_slave_set_current_track(track);
-                i2c_slave_set_status(STATUS_PLAYING);
-            }
-
-            if (g_image_cache_count > 0 && g_image_cache[img_index].pixels) {
-                if (lvgl_port_lock(100)) {
-                    ui_set_image(g_image_cache[img_index].pixels,
-                                 g_image_cache[img_index].width,
-                                 g_image_cache[img_index].height);
-                    lvgl_port_unlock();
-                }
-                img_index = (img_index + 1) % g_image_cache_count;
-            }
-        } else {
-            prev_track = 0;
-            i2c_slave_set_status(STATUS_STOPPED);
-        }
-        vTaskDelay(pdMS_TO_TICKS(5000));
-    }
-}
+/* ========== Slideshow Task (removed in new UI) ========== */
 
 static uint8_t scan_mp3_tracks(void)
 {
@@ -391,28 +360,7 @@ static void on_task2_btn(void)
     }
 }
 
-/* ========== Menu Action Wrappers (for touch click) ========== */
-static void menu_play_action(void)
-{
-    if (max_tracks > 0) {
-        preload_images_for_track(current_track);
-        audio_player_play_track(current_track);
-        is_playing = true;
-        lvgl_port_lock(100);
-        ui_show_playing(current_track);
-        if (g_image_cache_count > 0) {
-            ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
-        }
-        lvgl_port_unlock();
-    }
-}
-
-static void menu_settings_action(void)
-{
-    lvgl_port_lock(100);
-    ui_show_settings();
-    lvgl_port_unlock();
-}
+/* ========== Menu Action Wrappers (removed in new UI) ========== */
 
 /* ========== Button Task (GPIO control) ========== */
 static void button_task(void *param)
