@@ -416,6 +416,21 @@ static void list_flash_tree(const char *path, int depth)
     closedir(dir);
 }
 
+/* ========== Task Button Callbacks ========== */
+static void on_task1_btn(void)
+{
+    ESP_LOGI(TAG, "Task 1 button pressed - sending command 0xA1");
+    i2c_slave_set_command(CMD_TASK1);
+    ui_set_task_status("Task 1 Sent");
+}
+
+static void on_task2_btn(void)
+{
+    ESP_LOGI(TAG, "Task 2 button pressed - sending command 0xA2");
+    i2c_slave_set_command(CMD_TASK2);
+    ui_set_task_status("Task 2 Sent");
+}
+
 /* ========== Menu Action Wrappers (for touch click) ========== */
 static void menu_play_action(void)
 {
@@ -611,6 +626,9 @@ void app_main(void)
 
     /* Set menu item callbacks for touch click */
     ui_set_menu_callbacks(menu_play_action, on_usb_mode, menu_settings_action);
+    
+    /* Set task button callbacks */
+    ui_set_task_callbacks(on_task1_btn, on_task2_btn);
 
     /* Show welcome screen */
     ui_show_welcome();

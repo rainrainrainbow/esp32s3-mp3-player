@@ -30,6 +30,11 @@ static i2c_brightness_cb_t brightness_callback = NULL;
 // Track last register address for read operations
 static uint8_t last_reg_addr = 0;
 
+// Command register (S3→Uno)
+static volatile uint8_t g_cmd_to_uno = 0;
+static volatile TickType_t cmd_timestamp = 0;
+#define CMD_AUTO_CLEAR_MS 500  // Auto-clear command after 500ms
+
 /**
  * @brief I2C slave polling task
  */
@@ -38,12 +43,27 @@ static void i2c_slave_task(void *arg)
     uint8_t data[32];
     
     while (1) {
+        // Auto-clear command register if timeout
+        if (g_cmd_to_uno != 0 && (xTaskGetTickCount() - cmd_timestamp) > pdMS_TO_TICKS(CMD_AUTO_CLEAR_MS)) {
+            g_cmd_to_uno = 0;
+        }
+        
         // Try to read data from I2C slave buffer
         int len = i2c_slave_read_buffer(I2C_SLAVE_PORT, data, sizeof(data), pdMS_TO_TICKS(50));
         
         if (len > 0) {
             // First byte is register address
             last_reg_addr = data[0];
+            
+            // Handle command register read request
+            if (len == 1 && data[0] == REG_COMMAND) {
+                // Master wants to read command register
+                // Prepare response in TX buffer
+                i2c_slave_write_buffer(I2C_SLAVE_PORT, &g_cmd_to_uno, 1, pdMS_TO_TICKS(10));
+                // Clear after sending (edge-triggered)
+                g_cmd_to_uno = 0;
+                continue;
+            }
             
             // Process write commands (register + value)
             if (len >= 2) {
@@ -80,6 +100,15 @@ static void i2c_slave_task(void *arg)
                             ESP_LOGI(TAG, "I2C: Brightness = %d", val);
                             reg_brightness = val;
                             if (brightness_callback) brightness_callback(val);
+                        }
+                        break;
+                        
+                    case REG_COMMAND:
+                        // Uno writes command to S3 (e.g., from physical button)
+                        if (val == CMD_TASK1 || val == CMD_TASK2 || val == CMD_STOP_TASK) {
+                            ESP_LOGI(TAG, "I2C: Command 0x%02X received", val);
+                            g_cmd_to_uno = val;
+                            cmd_timestamp = xTaskGetTickCount();
                         }
                         break;
                 }
@@ -173,4 +202,13 @@ bool i2c_slave_get_stop_requested(void)
 void i2c_slave_clear_stop_request(void)
 {
     stop_requested = false;
+}
+
+void i2c_slave_set_command(uint8_t cmd)
+{
+    if (cmd == CMD_TASK1 || cmd == CMD_TASK2 || cmd == CMD_STOP_TASK) {
+        g_cmd_to_uno = cmd;
+        cmd_timestamp = xTaskGetTickCount();
+        ESP_LOGI(TAG, "Command set: 0x%02X", cmd);
+    }
 }

@@ -13,6 +13,13 @@
 #define REG_CURRENT_TRACK       0x03  // Read: current track number
 #define REG_VOLUME              0x04  // Read/Write: volume 0-100
 #define REG_BRIGHTNESS          0x05  // Read/Write: brightness 0-100
+#define REG_COMMAND             0x10  // Command channel (S3→Uno)
+
+// Command values for REG_COMMAND
+#define CMD_NONE                0x00  // No command
+#define CMD_TASK1               0xA1  // Execute task table 1
+#define CMD_TASK2               0xA2  // Execute task table 2
+#define CMD_STOP_TASK           0xAB  // Stop current task, return to APP_MODE
 
 // Play Status
 #define STATUS_STOPPED          0
@@ -76,5 +83,10 @@ bool i2c_slave_get_stop_requested(void);
  * @brief Clear stop request flag
  */
 void i2c_slave_clear_stop_request(void);
+
+/**
+ * @brief Set command to be read by master (edge-triggered, auto-clears after 500ms)
+ */
+void i2c_slave_set_command(uint8_t cmd);
 
 #endif // I2C_SLAVE_H

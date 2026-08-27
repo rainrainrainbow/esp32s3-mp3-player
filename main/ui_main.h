@@ -128,4 +128,17 @@ void ui_set_play_button_text(bool is_playing);
  */
 ui_state_t ui_get_state(void);
 
+/* Task button callback type */
+typedef void (*ui_task_btn_cb_t)(void);
+
+/**
+ * @brief Set task button callbacks (Task1, Task2)
+ */
+void ui_set_task_callbacks(ui_task_btn_cb_t task1_cb, ui_task_btn_cb_t task2_cb);
+
+/**
+ * @brief Update task status label text
+ */
+void ui_set_task_status(const char *text);
+
 #endif // UI_MAIN_H
