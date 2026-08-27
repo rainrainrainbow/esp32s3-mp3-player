@@ -11,9 +11,8 @@
 /* UI states */
 typedef enum {
     UI_STATE_WELCOME = 0,
-    UI_STATE_MENU,        /* Main menu: Play / USB / Settings */
-    UI_STATE_PLAYING,
-    UI_STATE_STOPPED,
+    UI_STATE_MENU,        /* Main menu: Task1 / Task2 / Settings */
+    UI_STATE_TASK_RUNNING, /* Task running with startup image */
     UI_STATE_SETTINGS
 } ui_state_t;
 
@@ -73,14 +72,14 @@ menu_item_t ui_menu_confirm(void);
 menu_item_t ui_menu_get_selection(void);
 
 /**
- * @brief Show playing screen with image
+ * @brief Show task running screen with startup image (0.png)
  */
-void ui_show_playing(uint8_t track);
+void ui_show_task_running(void);
 
 /**
- * @brief Show stopped screen
+ * @brief Return to main menu from task running
  */
-void ui_show_stopped(void);
+void ui_return_to_menu(void);
 
 /**
  * @brief Show settings menu
