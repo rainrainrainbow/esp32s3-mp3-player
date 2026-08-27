@@ -257,28 +257,29 @@ static void create_menu_screen(void)
     scr_menu = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr_menu, COLOR_BG, 0);
 
-    /* Title */
+    /* Title - Top area */
     lv_obj_t *title = lv_label_create(scr_menu);
     lv_label_set_text(title, "MP3 Player");
     lv_obj_set_style_text_color(title, COLOR_TEXT, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 15);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
 
-    /* Menu buttons - vertical layout */
-    static const char *menu_texts[] = { LV_SYMBOL_PLAY "  Play", LV_SYMBOL_USB "  USB Mode", LV_SYMBOL_SETTINGS "  Settings" };
-    int btn_y = 55;
-    int btn_h = 45;
-    int btn_gap = 10;
+    /* Menu buttons - Center area (vertical layout) */
+    static const char *menu_texts[] = { LV_SYMBOL_PLAY " Play", LV_SYMBOL_USB " USB", LV_SYMBOL_SETTINGS " Settings" };
+    int btn_y_start = 50;
+    int btn_h = 40;
+    int btn_gap = 8;
 
     for (int i = 0; i < MENU_ITEM_COUNT; i++) {
         menu_btns[i] = lv_btn_create(scr_menu);
-        lv_obj_set_size(menu_btns[i], 260, btn_h);
-        lv_obj_align(menu_btns[i], LV_ALIGN_TOP_MID, 0, btn_y + i * (btn_h + btn_gap));
+        lv_obj_set_size(menu_btns[i], 240, btn_h);
+        lv_obj_align(menu_btns[i], LV_ALIGN_TOP_MID, 0, btn_y_start + i * (btn_h + btn_gap));
         lv_obj_set_style_bg_color(menu_btns[i], COLOR_SURFACE, 0);
         lv_obj_set_style_bg_color(menu_btns[i], COLOR_SELECTED, LV_STATE_FOCUSED);
         lv_obj_set_style_border_width(menu_btns[i], 2, 0);
         lv_obj_set_style_border_color(menu_btns[i], COLOR_PRIMARY, 0);
         lv_obj_set_style_border_color(menu_btns[i], COLOR_ACCENT, LV_STATE_FOCUSED);
-        lv_obj_set_style_radius(menu_btns[i], 8, 0);
+        lv_obj_set_style_radius(menu_btns[i], 6, 0);
         lv_obj_add_event_cb(menu_btns[i], menu_btn_handler, LV_EVENT_CLICKED, NULL);
 
         menu_labels[i] = lv_label_create(menu_btns[i]);
@@ -287,39 +288,48 @@ static void create_menu_screen(void)
         lv_obj_center(menu_labels[i]);
     }
 
-    /* Hint text */
-    lv_obj_t *hint = lv_label_create(scr_menu);
-    lv_label_set_text(hint, "GPIO0: Up  |  GPIO43: Down/Enter");
-    lv_obj_set_style_text_color(hint, COLOR_MUTED, 0);
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -10);
-
-    /* Task buttons - positioned above hint text */
+    /* Bottom area - Task buttons and status */
+    /* Task button 1 */
     btn_task1 = lv_btn_create(scr_menu);
-    lv_obj_set_size(btn_task1, 90, 30);
-    lv_obj_align(btn_task1, LV_ALIGN_BOTTOM_LEFT, 15, -80);
-    lv_obj_set_style_bg_color(btn_task1, COLOR_PRIMARY, 0);
+    lv_obj_set_size(btn_task1, 80, 28);
+    lv_obj_align(btn_task1, LV_ALIGN_BOTTOM_LEFT, 10, -45);
+    lv_obj_set_style_bg_color(btn_task1, lv_color_hex(0x2D5F8A), 0);
     lv_obj_set_style_bg_color(btn_task1, COLOR_ACCENT, LV_STATE_FOCUSED);
+    lv_obj_set_style_radius(btn_task1, 4, 0);
     lv_obj_add_event_cb(btn_task1, btn_task1_handler, LV_EVENT_CLICKED, NULL);
     
     lv_obj_t *lbl_task1 = lv_label_create(btn_task1);
-    lv_label_set_text(lbl_task1, "T1");
+    lv_label_set_text(lbl_task1, "Task1");
+    lv_obj_set_style_text_font(lbl_task1, &lv_font_montserrat_12, 0);
     lv_obj_center(lbl_task1);
     
+    /* Task button 2 */
     btn_task2 = lv_btn_create(scr_menu);
-    lv_obj_set_size(btn_task2, 90, 30);
-    lv_obj_align(btn_task2, LV_ALIGN_BOTTOM_RIGHT, -15, -80);
-    lv_obj_set_style_bg_color(btn_task2, COLOR_PRIMARY, 0);
+    lv_obj_set_size(btn_task2, 80, 28);
+    lv_obj_align(btn_task2, LV_ALIGN_BOTTOM_RIGHT, -10, -45);
+    lv_obj_set_style_bg_color(btn_task2, lv_color_hex(0x2D5F8A), 0);
     lv_obj_set_style_bg_color(btn_task2, COLOR_ACCENT, LV_STATE_FOCUSED);
+    lv_obj_set_style_radius(btn_task2, 4, 0);
     lv_obj_add_event_cb(btn_task2, btn_task2_handler, LV_EVENT_CLICKED, NULL);
     
     lv_obj_t *lbl_task2 = lv_label_create(btn_task2);
-    lv_label_set_text(lbl_task2, "T2");
+    lv_label_set_text(lbl_task2, "Task2");
+    lv_obj_set_style_text_font(lbl_task2, &lv_font_montserrat_12, 0);
     lv_obj_center(lbl_task2);
     
+    /* Status label - centered between task buttons */
     status_label = lv_label_create(scr_menu);
     lv_label_set_text(status_label, "Ready");
     lv_obj_set_style_text_color(status_label, COLOR_MUTED, 0);
-    lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID, 0, -50);
+    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_10, 0);
+    lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID, 0, -15);
+
+    /* Hint text - very bottom */
+    lv_obj_t *hint = lv_label_create(scr_menu);
+    lv_label_set_text(hint, "GPIO: Up/Down");
+    lv_obj_set_style_text_color(hint, lv_color_hex(0x666666), 0);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_8, 0);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -2);
 
     /* Focus first item */
     lv_group_focus_obj(menu_btns[0]);
