@@ -319,7 +319,6 @@ static void create_stopped_screen(void)
     stopped_label = lv_label_create(scr_stopped);
     lv_label_set_text(stopped_label, LV_SYMBOL_PAUSE " Stopped");
     lv_obj_set_style_text_color(stopped_label, COLOR_TEXT, 0);
-    lv_obj_set_style_text_font(stopped_label, &lv_font_montserrat_28, 0);
     lv_obj_align(stopped_label, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_t *hint = lv_label_create(scr_stopped);
