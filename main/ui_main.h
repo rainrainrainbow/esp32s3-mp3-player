@@ -35,11 +35,10 @@ typedef void (*ui_usb_cb_t)(void);
 void ui_init(void);
 
 /**
- * @brief Set UI event callbacks
+ * @brief Set UI event callbacks for simplified UI
  */
-void ui_set_callbacks(ui_btn_cb_t prev_cb, ui_btn_cb_t play_cb, ui_btn_cb_t next_cb,
-                      ui_slider_cb_t vol_cb, ui_slider_cb_t bright_cb,
-                      ui_usb_cb_t usb_cb);
+void ui_set_callbacks(void (*task1)(void), void (*task2)(void), void (*usb)(void),
+                      void (*vol)(uint8_t), void (*bright)(uint8_t));
 
 /**
  * @brief Set menu item execution callbacks (for touch click)
@@ -113,9 +112,9 @@ void ui_set_brightness(uint8_t brightness);
 void ui_set_track(uint8_t track);
 
 /**
- * @brief Set image to display (RGB565 buffer)
+ * @brief Set task startup image to display (RGB565 buffer)
  */
-void ui_set_image(const uint16_t *pixels, uint16_t w, uint16_t h);
+void ui_set_task_image(const uint16_t *pixels, uint16_t w, uint16_t h);
 
 /**
  * @brief Set play button icon (play/pause)

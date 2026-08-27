@@ -148,64 +148,6 @@ static uint8_t max_tracks = 0;
 static uint8_t current_track = 1;
 static bool is_playing = false;
 
-static void on_prev(void)
-{
-    if (max_tracks == 0) return;
-    current_track = (current_track <= 1) ? max_tracks : current_track - 1;
-    ESP_LOGI(TAG, "Prev track %u", current_track);
-    preload_images_for_track(current_track);
-    audio_player_play_track(current_track);
-    is_playing = true;
-    if (lvgl_port_lock(100)) {
-        ui_show_playing(current_track);
-        if (g_image_cache_count > 0) {
-            ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
-        }
-        lvgl_port_unlock();
-    }
-}
-
-static void on_play(void)
-{
-    if (is_playing) {
-        audio_player_pause();
-        is_playing = false;
-        if (lvgl_port_lock(100)) {
-            ui_show_stopped();
-            lvgl_port_unlock();
-        }
-    } else {
-        if (max_tracks == 0) return;
-        preload_images_for_track(current_track);
-        audio_player_play_track(current_track);
-        is_playing = true;
-        if (lvgl_port_lock(100)) {
-            ui_show_playing(current_track);
-            if (g_image_cache_count > 0) {
-                ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
-            }
-            lvgl_port_unlock();
-        }
-    }
-}
-
-static void on_next(void)
-{
-    if (max_tracks == 0) return;
-    current_track = (current_track >= max_tracks) ? 1 : current_track + 1;
-    ESP_LOGI(TAG, "Next track %u", current_track);
-    preload_images_for_track(current_track);
-    audio_player_play_track(current_track);
-    is_playing = true;
-    if (lvgl_port_lock(100)) {
-        ui_show_playing(current_track);
-        if (g_image_cache_count > 0) {
-            ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
-        }
-        lvgl_port_unlock();
-    }
-}
-
 static void on_volume_change(uint8_t vol)
 {
     g_volume = vol;
