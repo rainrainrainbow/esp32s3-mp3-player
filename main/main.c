@@ -139,6 +139,10 @@ static void preload_images_for_track(uint8_t track)
     g_cached_track = track;
 }
 
+/* ========== Forward Declarations ========== */
+static uint8_t scan_mp3_tracks(void);
+static void preload_images_for_track(uint8_t track);
+
 /* ========== UI Callbacks ========== */
 static uint8_t max_tracks = 0;
 static uint8_t current_track = 1;
@@ -152,9 +156,12 @@ static void on_prev(void)
     preload_images_for_track(current_track);
     audio_player_play_track(current_track);
     is_playing = true;
-    ui_show_playing(current_track);
-    if (g_image_cache_count > 0) {
-        ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+    if (lvgl_port_lock(100)) {
+        ui_show_playing(current_track);
+        if (g_image_cache_count > 0) {
+            ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+        }
+        lvgl_port_unlock();
     }
 }
 
@@ -163,15 +170,21 @@ static void on_play(void)
     if (is_playing) {
         audio_player_pause();
         is_playing = false;
-        ui_show_stopped();
+        if (lvgl_port_lock(100)) {
+            ui_show_stopped();
+            lvgl_port_unlock();
+        }
     } else {
         if (max_tracks == 0) return;
         preload_images_for_track(current_track);
         audio_player_play_track(current_track);
         is_playing = true;
-        ui_show_playing(current_track);
-        if (g_image_cache_count > 0) {
-            ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+        if (lvgl_port_lock(100)) {
+            ui_show_playing(current_track);
+            if (g_image_cache_count > 0) {
+                ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+            }
+            lvgl_port_unlock();
         }
     }
 }
@@ -184,9 +197,12 @@ static void on_next(void)
     preload_images_for_track(current_track);
     audio_player_play_track(current_track);
     is_playing = true;
-    ui_show_playing(current_track);
-    if (g_image_cache_count > 0) {
-        ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+    if (lvgl_port_lock(100)) {
+        ui_show_playing(current_track);
+        if (g_image_cache_count > 0) {
+            ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+        }
+        lvgl_port_unlock();
     }
 }
 
@@ -204,17 +220,27 @@ static void on_brightness_change(uint8_t bright)
     save_settings();
 }
 
-/* ========== Car Task Control (button -> I2C slave pending command) ========== */
-static void on_task1(void)
+static void on_usb_mode(void)
 {
-    ESP_LOGI(TAG, "UI: Task A requested");
-    i2c_slave_set_task_command(TASK_CMD_ACTION1);
-}
-
-static void on_task2(void)
-{
-    ESP_LOGI(TAG, "UI: Task B requested");
-    i2c_slave_set_task_command(TASK_CMD_ACTION2);
+    ESP_LOGI(TAG, "USB mode switch requested");
+    audio_player_stop();
+    is_playing = false;
+    vTaskDelay(pdMS_TO_TICKS(100));
+    if (usb_msc_is_app_mode()) {
+        usb_msc_switch_to_usb();
+    } else {
+        if (usb_msc_switch_to_app()) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            max_tracks = scan_mp3_tracks();
+            current_track = 1;
+            preload_images_for_track(1);
+        }
+    }
+    /* Return to menu after USB switch */
+    if (lvgl_port_lock(100)) {
+        ui_show_menu();
+        lvgl_port_unlock();
+    }
 }
 
 /* ========== I2C Command Queue ========== */
@@ -390,6 +416,29 @@ static void list_flash_tree(const char *path, int depth)
     closedir(dir);
 }
 
+/* ========== Menu Action Wrappers (for touch click) ========== */
+static void menu_play_action(void)
+{
+    if (max_tracks > 0) {
+        preload_images_for_track(current_track);
+        audio_player_play_track(current_track);
+        is_playing = true;
+        lvgl_port_lock(100);
+        ui_show_playing(current_track);
+        if (g_image_cache_count > 0) {
+            ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+        }
+        lvgl_port_unlock();
+    }
+}
+
+static void menu_settings_action(void)
+{
+    lvgl_port_lock(100);
+    ui_show_settings();
+    lvgl_port_unlock();
+}
+
 /* ========== Button Task (GPIO fallback) ========== */
 static void button_task(void *param)
 {
@@ -399,56 +448,128 @@ static void button_task(void *param)
     gpio_set_direction(GPIO_NUM_43, GPIO_MODE_INPUT);
     gpio_set_pull_mode(GPIO_NUM_43, GPIO_PULLUP_ONLY);
 
+    const TickType_t LONG_PRESS_MS = 2000; /* 2 seconds for long press */
+
     while (1) {
-        /* GPIO0: Prev / USB switch */
+        /* ===== GPIO0 (Left Button): Back / Prev / Menu Navigate ===== */
         if (gpio_get_level(GPIO_NUM_0) == 0) {
             TickType_t pressed_at = xTaskGetTickCount();
             bool long_press = false;
             while (gpio_get_level(GPIO_NUM_0) == 0) {
-                if ((xTaskGetTickCount() - pressed_at) >= pdMS_TO_TICKS(3000)) { long_press = true; break; }
+                if ((xTaskGetTickCount() - pressed_at) >= pdMS_TO_TICKS(LONG_PRESS_MS)) {
+                    long_press = true;
+                    break;
+                }
                 vTaskDelay(pdMS_TO_TICKS(20));
             }
             while (gpio_get_level(GPIO_NUM_0) == 0) vTaskDelay(pdMS_TO_TICKS(20));
 
+            ui_state_t state = ui_get_state();
+
             if (long_press) {
-                audio_player_stop();
-                is_playing = false;
-                vTaskDelay(pdMS_TO_TICKS(100));
-                if (usb_msc_is_app_mode()) { usb_msc_switch_to_usb(); }
-                else {
-                    if (usb_msc_switch_to_app()) {
-                        vTaskDelay(pdMS_TO_TICKS(100));
-                        max_tracks = scan_mp3_tracks();
-                        current_track = 1;
-                        preload_images_for_track(1);
+                /* Long press GPIO0: Return to main menu from any screen */
+                if (state != UI_STATE_MENU && state != UI_STATE_WELCOME) {
+                    if (lvgl_port_lock(100)) {
+                        ui_hide_settings(); /* Close settings if open */
+                        ui_show_menu();
+                        lvgl_port_unlock();
                     }
                 }
             } else {
-                on_prev();
+                /* Short press GPIO0: Context-aware back/prev */
+                if (lvgl_port_lock(100)) {
+                    if (state == UI_STATE_SETTINGS) {
+                        /* In settings: decrease value or switch focus */
+                        ui_settings_adjust(-1);
+                    } else if (state == UI_STATE_MENU) {
+                        /* In menu: navigate up */
+                        ui_menu_navigate(-1);
+                    } else if (state == UI_STATE_PLAYING || state == UI_STATE_STOPPED) {
+                        /* Playing: previous track */
+                        lvgl_port_unlock();
+                        on_prev();
+                        continue; /* Skip the unlock below */
+                    } else if (state == UI_STATE_WELCOME) {
+                        /* Welcome: go to menu */
+                        ui_show_menu();
+                    }
+                    lvgl_port_unlock();
+                }
             }
-            vTaskDelay(pdMS_TO_TICKS(80));
+            vTaskDelay(pdMS_TO_TICKS(150));
             continue;
         }
 
-        /* GPIO43: Next / Settings */
+        /* ===== GPIO43 (Right Button): Confirm / Next / Settings ===== */
         if (gpio_get_level(GPIO_NUM_43) == 0) {
             TickType_t pressed_at = xTaskGetTickCount();
             bool long_press = false;
             while (gpio_get_level(GPIO_NUM_43) == 0) {
-                if ((xTaskGetTickCount() - pressed_at) >= pdMS_TO_TICKS(2000)) { long_press = true; break; }
+                if ((xTaskGetTickCount() - pressed_at) >= pdMS_TO_TICKS(LONG_PRESS_MS)) {
+                    long_press = true;
+                    break;
+                }
                 vTaskDelay(pdMS_TO_TICKS(20));
             }
             while (gpio_get_level(GPIO_NUM_43) == 0) vTaskDelay(pdMS_TO_TICKS(20));
 
+            ui_state_t state = ui_get_state();
+
             if (long_press) {
+                /* Long press GPIO43: Toggle settings panel */
                 if (lvgl_port_lock(100)) {
-                    ui_show_settings();
+                    if (state == UI_STATE_SETTINGS) {
+                        ui_hide_settings();
+                    } else if (state != UI_STATE_WELCOME) {
+                        ui_show_settings();
+                    }
                     lvgl_port_unlock();
                 }
             } else {
-                on_next();
+                /* Short press GPIO43: Confirm / Next / Navigate down */
+                if (lvgl_port_lock(100)) {
+                    if (state == UI_STATE_SETTINGS) {
+                        /* In settings: increase value */
+                        ui_settings_adjust(1);
+                    } else if (state == UI_STATE_MENU) {
+                        /* In menu: confirm selection */
+                        lvgl_port_unlock();
+                        menu_item_t sel = ui_menu_confirm();
+                        if (sel == MENU_ITEM_PLAY) {
+                            if (max_tracks > 0) {
+                                preload_images_for_track(current_track);
+                                audio_player_play_track(current_track);
+                                is_playing = true;
+                                if (lvgl_port_lock(100)) {
+                                    ui_show_playing(current_track);
+                                    if (g_image_cache_count > 0) {
+                                        ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
+                                    }
+                                    lvgl_port_unlock();
+                                }
+                            }
+                        } else if (sel == MENU_ITEM_USB) {
+                            on_usb_mode();
+                        } else if (sel == MENU_ITEM_SETTINGS) {
+                            if (lvgl_port_lock(100)) {
+                                ui_show_settings();
+                                lvgl_port_unlock();
+                            }
+                        }
+                        continue; /* Skip the unlock below */
+                    } else if (state == UI_STATE_PLAYING || state == UI_STATE_STOPPED) {
+                        /* Playing: next track */
+                        lvgl_port_unlock();
+                        on_next();
+                        continue; /* Skip the unlock below */
+                    } else if (state == UI_STATE_WELCOME) {
+                        /* Welcome: go to menu */
+                        ui_show_menu();
+                    }
+                    lvgl_port_unlock();
+                }
             }
-            vTaskDelay(pdMS_TO_TICKS(80));
+            vTaskDelay(pdMS_TO_TICKS(150));
             continue;
         }
 
@@ -469,7 +590,14 @@ void app_main(void)
 
     load_settings();
 
-    /* Initialize TFT first */
+    /* Initialize audio */
+    audio_player_init();
+    apply_volume();
+
+    /* Play diagnostic test tone BEFORE LVGL starts (no LVGL task interference) */
+    audio_player_play_test_tone();
+
+    /* Initialize TFT */
     tft_init();
     tft_fill_screen(0x0000);
     apply_brightness();
@@ -479,16 +607,14 @@ void app_main(void)
     ui_init();
 
     /* Set UI callbacks */
-    ui_set_callbacks(on_prev, on_play, on_next, on_volume_change, on_brightness_change,
-                     on_task1, on_task2);
+    ui_set_callbacks(on_prev, on_play, on_next, on_volume_change, on_brightness_change, on_usb_mode);
+
+    /* Set menu item callbacks for touch click */
+    ui_set_menu_callbacks(menu_play_action, on_usb_mode, menu_settings_action);
 
     /* Show welcome screen */
     ui_show_welcome();
     vTaskDelay(pdMS_TO_TICKS(500));
-
-    /* Initialize audio */
-    audio_player_init();
-    apply_volume();
 
     /* Create I2C command queue (depth=10) */
     i2c_cmd_queue = xQueueCreate(10, sizeof(i2c_cmd_t));
@@ -523,19 +649,16 @@ void app_main(void)
         preload_images_for_track(1);
     }
 
-    /* Diagnostic tone */
-    audio_player_play_test_tone();
-
-    /* Show stopped screen */
-    ui_show_stopped();
+    /* Show main menu */
+    ui_show_menu();
 
     /* Create tasks */
     xTaskCreatePinnedToCore(slideshow_task, "slideshow", 8192, NULL, 1, NULL, 1);
-    xTaskCreatePinnedToCore(button_task, "buttons", 16384, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(button_task, "buttons", 32768, NULL, 5, NULL, 1);
     xTaskCreatePinnedToCore(i2c_cmd_task, "i2c_cmd", 8192, NULL, 4, NULL, 1);
 
     ESP_LOGI(TAG, "System ready");
-    ESP_LOGI(TAG, "GPIO0=Prev/USB, GPIO43=Next/Settings");
+    ESP_LOGI(TAG, "GPIO0: Up/Back | Long=USB  GPIO43: Down/Enter | Long=Settings");
     ESP_LOGI(TAG, "Touch: FT5x06 at 0x%02X", TOUCH_I2C_ADDR);
     ESP_LOGI(TAG, "I2C Slave: 0x%02X", I2C_SLAVE_ADDR);
     ESP_LOGI(TAG, "Settings: vol=%d%%, bright=%d%%", g_volume, g_brightness);

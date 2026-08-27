@@ -11,15 +11,24 @@
 /* UI states */
 typedef enum {
     UI_STATE_WELCOME = 0,
+    UI_STATE_MENU,        /* Main menu: Play / USB / Settings */
     UI_STATE_PLAYING,
     UI_STATE_STOPPED,
-    UI_STATE_SETTINGS,
-    UI_STATE_CONTROL
+    UI_STATE_SETTINGS
 } ui_state_t;
+
+/* Menu items */
+typedef enum {
+    MENU_ITEM_PLAY = 0,
+    MENU_ITEM_USB,
+    MENU_ITEM_SETTINGS,
+    MENU_ITEM_COUNT
+} menu_item_t;
 
 /* Callback types for UI events */
 typedef void (*ui_btn_cb_t)(void);
 typedef void (*ui_slider_cb_t)(uint8_t);
+typedef void (*ui_usb_cb_t)(void);
 
 /**
  * @brief Initialize the LVGL UI
@@ -31,12 +40,37 @@ void ui_init(void);
  */
 void ui_set_callbacks(ui_btn_cb_t prev_cb, ui_btn_cb_t play_cb, ui_btn_cb_t next_cb,
                       ui_slider_cb_t vol_cb, ui_slider_cb_t bright_cb,
-                      ui_btn_cb_t task1_cb, ui_btn_cb_t task2_cb);
+                      ui_usb_cb_t usb_cb);
+
+/**
+ * @brief Set menu item execution callbacks (for touch click)
+ */
+void ui_set_menu_callbacks(void (*play)(void), void (*usb)(void), void (*settings)(void));
 
 /**
  * @brief Show welcome screen
  */
 void ui_show_welcome(void);
+
+/**
+ * @brief Show main menu
+ */
+void ui_show_menu(void);
+
+/**
+ * @brief Navigate menu (direction: -1=up, +1=down)
+ */
+void ui_menu_navigate(int8_t direction);
+
+/**
+ * @brief Confirm current menu selection, returns selected item
+ */
+menu_item_t ui_menu_confirm(void);
+
+/**
+ * @brief Get current menu selection
+ */
+menu_item_t ui_menu_get_selection(void);
 
 /**
  * @brief Show playing screen with image
@@ -54,14 +88,15 @@ void ui_show_stopped(void);
 void ui_show_settings(void);
 
 /**
- * @brief Show car control screen (task buttons)
- */
-void ui_show_control(void);
-
-/**
- * @brief Hide settings menu
+ * @brief Hide settings menu / return to previous screen
  */
 void ui_hide_settings(void);
+
+/**
+ * @brief Adjust settings via buttons (direction: -1=decrease, +1=increase)
+ * Cycles focus between volume and brightness sliders.
+ */
+void ui_settings_adjust(int8_t direction);
 
 /**
  * @brief Update volume display

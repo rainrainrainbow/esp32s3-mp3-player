@@ -159,16 +159,21 @@ void tft_init(void)
     tft_send_cmd(CMD_SLPOUT);
     vTaskDelay(pdMS_TO_TICKS(150));
     
-    // MADCTL = 0x08 (BGR only, no MX) - fix horizontal mirror
+    // MADCTL for landscape 320x240: MV|MY = 0x60 (RGB order, no BGR)
+    // MV(0x20) swaps X/Y, MY(0x40) mirrors Y
+    // No byte-swap in DMA buffer, so LVGL RGB565 goes directly to TFT
     tft_send_cmd(CMD_MADCTL);
-    uint8_t madctl = 0x08;
+    uint8_t madctl = 0x60;
     tft_send_data(&madctl, 1);
-    ESP_LOGI(TAG, "MADCTL = 0x%02X", madctl);
+    ESP_LOGI(TAG, "MADCTL = 0x%02X (landscape, RGB order, no byte-swap)", madctl);
     
-    // COLMOD = 0x55 (16-bit)
+    // COLMOD = 0x05 (16-bit RGB565 for ST7789)
     tft_send_cmd(CMD_COLMOD);
-    uint8_t colmod = 0x55;
+    uint8_t colmod = 0x05;
     tft_send_data(&colmod, 1);
+    
+    // Display Inversion ON (0x21) - Required for many ST7789 IPS panels
+    tft_send_cmd(0x21); 
     
     // DISPON
     tft_send_cmd(CMD_DISPON);
@@ -323,9 +328,10 @@ void tft_show_rgb565_area(const uint16_t *pixels, uint16_t width, uint16_t heigh
     while (total > 0) {
         size_t chunk = (total > DMA_BUFFER_SIZE) ? DMA_BUFFER_SIZE : total;
 
-        // Byte-swap into DMA buffer for SPI big-endian
+        // Byte swap for SPI transmission (ESP32 sends MSB first, ST7789 expects MSB of color first)
         for (size_t i = 0; i < chunk; i++) {
-            dma_buffer[i] = ((src[i] >> 8) & 0xFF) | ((src[i] & 0xFF) << 8);
+            uint16_t pixel = src[i];
+            dma_buffer[i] = ((pixel >> 8) & 0xFF) | ((pixel << 8) & 0xFF00);
         }
 
         spi_transaction_t t = {

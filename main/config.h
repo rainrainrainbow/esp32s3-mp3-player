@@ -1,35 +1,28 @@
 #ifndef _BOARD_CONFIG_H_
 #define _BOARD_CONFIG_H_
-
 #include <driver/gpio.h>
 
 /* ========== Audio Configuration ========== */
 #define AUDIO_INPUT_SAMPLE_RATE  16000
 #define AUDIO_OUTPUT_SAMPLE_RATE 16000
-
-// I2S for ES8311
 #define AUDIO_I2S_GPIO_MCLK GPIO_NUM_45
-#define AUDIO_I2S_GPIO_WS   GPIO_NUM_41   // LRCK
-#define AUDIO_I2S_GPIO_BCLK GPIO_NUM_39   // BCLK
-#define AUDIO_I2S_GPIO_DIN  GPIO_NUM_40   // I2S_SD_IN (from codec)
-#define AUDIO_I2S_GPIO_DOUT GPIO_NUM_42   // I2S_SD_OUT (to codec)
-
-// ES8311 I2C control
+#define AUDIO_I2S_GPIO_WS   GPIO_NUM_41
+#define AUDIO_I2S_GPIO_BCLK GPIO_NUM_39
+#define AUDIO_I2S_GPIO_DIN  GPIO_NUM_40
+#define AUDIO_I2S_GPIO_DOUT GPIO_NUM_42
 #define AUDIO_CODEC_PA_PIN       GPIO_NUM_46
 #define AUDIO_CODEC_I2C_SDA_PIN  GPIO_NUM_4
 #define AUDIO_CODEC_I2C_SCL_PIN  GPIO_NUM_5
 
-/* ========== Display Configuration ========== */
-#define DISPLAY_WIDTH   240
-#define DISPLAY_HEIGHT  320
+/* ========== Display Configuration (Landscape 320x240) ========== */
+#define DISPLAY_WIDTH   320
+#define DISPLAY_HEIGHT  240
 #define DISPLAY_MIRROR_X false
 #define DISPLAY_MIRROR_Y true
 #define DISPLAY_SWAP_XY true
-
 #define DISPLAY_OFFSET_X  0
 #define DISPLAY_OFFSET_Y  0
 
-// SPI LCD - ST7789 or compatible
 #define DISPLAY_DC_GPIO     GPIO_NUM_1
 #define DISPLAY_CS_GPIO     GPIO_NUM_2
 #define DISPLAY_CLK_GPIO    GPIO_NUM_21
@@ -47,38 +40,33 @@
 #define I2C_SLAVE_PORT       I2C_NUM_0
 
 /* ========== Touch Screen Configuration ========== */
-// FT5x06 (I2C capacitive touch)
-#define TOUCH_I2C_SDA        GPIO_NUM_8
-#define TOUCH_I2C_SCL        GPIO_NUM_9
-#define TOUCH_I2C_PORT       I2C_NUM_1
+/* Touch shares I2C bus with ES8311 codec (same SDA/SCL pins) */
+#define TOUCH_I2C_SDA        AUDIO_CODEC_I2C_SDA_PIN   /* GPIO4, shared with ES8311 */
+#define TOUCH_I2C_SCL        AUDIO_CODEC_I2C_SCL_PIN   /* GPIO5, shared with ES8311 */
+#define TOUCH_I2C_PORT       I2C_NUM_1                  /* Same port as ES8311 */
 #define TOUCH_I2C_ADDR       0x38
 #define TOUCH_IRQ_GPIO       GPIO_NUM_7
 #define TOUCH_RST_GPIO       GPIO_NUM_6
 
-/* I2C Slave Registers */
-#define REG_PLAY_TRACK       0x01  // Write: select track 1-255
-#define REG_PLAY_STATUS      0x02  // Read: 0=stopped, 1=playing, 2=paused
+#define REG_PLAY_TRACK       0x01
+#define REG_PLAY_STATUS      0x02
 
 /* ========== Storage Configuration ========== */
 #define STORAGE_PARTITION_LABEL  "storage"
 #define STORAGE_MOUNT_POINT      "/spiflash"
 #define STORAGE_MAX_FILES        32
-
-/* ========== Playback Paths ========== */
 #define MUSIC_DIR   "/spiflash/music"
 #define IMAGE_DIR   "/spiflash/images"
 
 /* ========== Pin Mappings ========== */
 #define LEFT_BUTTON_GPIO  GPIO_NUM_3
 #define RIGHT_BUTTON_GPIO GPIO_NUM_3
-
-// UART for voice chip
 #define UART0_RXD     GPIO_NUM_44
 #define UART0_TXD     GPIO_NUM_NC
 #define UART0_PORT_NUM    UART_NUM_0
 #define UART0_BAUD_RATE   (115200)
 
-/* ========== Camera (unused but keep for reference) ========== */
+/* ========== Camera (unused) ========== */
 #define HIWONDER_CAMERA_XCLK      GPIO_NUM_15
 #define HIWONDER_CAMERA_PCLK      GPIO_NUM_13
 #define HIWONDER_CAMERA_VSYNC     GPIO_NUM_6
@@ -99,4 +87,4 @@
 #define HIWONDER_CAMERA_SIOD      GPIO_NUM_NC
 #define HIWONDER_CAMERA_SIOC      GPIO_NUM_NC
 
-#endif // _BOARD_CONFIG_H_
+#endif

@@ -13,12 +13,6 @@
 #define REG_CURRENT_TRACK       0x03  // Read: current track number
 #define REG_VOLUME              0x04  // Read/Write: volume 0-100
 #define REG_BRIGHTNESS          0x05  // Read/Write: brightness 0-100
-#define REG_TASK_COMMAND        0x06  // Read(clear-on-read)/Write: car task command
-
-// Task Command Values
-#define TASK_CMD_NONE           0     // No pending task
-#define TASK_CMD_ACTION1        1     // Execute task_actions1 on master (Arduino)
-#define TASK_CMD_ACTION2        2     // Execute task_actions2 on master (Arduino)
 
 // Play Status
 #define STATUS_STOPPED          0
@@ -82,15 +76,5 @@ bool i2c_slave_get_stop_requested(void);
  * @brief Clear stop request flag
  */
 void i2c_slave_clear_stop_request(void);
-
-/**
- * @brief Set pending car task command (for master polling read)
- */
-void i2c_slave_set_task_command(uint8_t cmd);
-
-/**
- * @brief Get and clear pending car task command (called by UI/main on button press to queue locally)
- */
-uint8_t i2c_slave_get_pending_task(void);
 
 #endif // I2C_SLAVE_H

@@ -29,8 +29,9 @@ static const char *TAG = "TOUCH";
 #define FT5X06_REG_TOUCH1_YH    0x05
 #define FT5X06_REG_TOUCH1_YL    0x06
 
-#define FT5X06_MAX_X  240
-#define FT5X06_MAX_Y  320
+/* Native touch panel resolution (portrait 240x320) */
+#define FT5X06_NATIVE_X  240
+#define FT5X06_NATIVE_Y  320
 
 static bool touch_initialized = false;
 static touch_point_t last_point = {0, 0};
@@ -92,51 +93,59 @@ static void ft5x06_reset(void)
 esp_err_t touch_driver_init(void)
 {
     ESP_LOGI(TAG, "Initializing FT5x06 touch at addr 0x%02X", TOUCH_I2C_ADDR);
+    ESP_LOGI(TAG, "Touch shares I2C bus with ES8311: SDA=%d, SCL=%d, PORT=%d",
+             TOUCH_I2C_SDA, TOUCH_I2C_SCL, TOUCH_I2C_PORT);
 
-    /* Configure I2C bus (reuse I2C_NUM_1 which is used for nothing else here) */
-    i2c_config_t conf = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = TOUCH_I2C_SDA,
-        .scl_io_num = TOUCH_I2C_SCL,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = 400000,
-        .clk_flags = 0,
-    };
-
-    esp_err_t ret = i2c_param_config(TOUCH_I2C_PORT, &conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2C config failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    ret = i2c_driver_install(TOUCH_I2C_PORT, I2C_MODE_MASTER, 0, 0, 0);
-    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "I2C install failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
+    /* I2C bus is already initialized by ES8311 codec (same port & pins).
+     * Do NOT re-initialize here - just verify the bus is available. */
+    esp_err_t ret = ESP_OK;
+    (void)ret;
 
     /* Reset the touch controller */
     ft5x06_reset();
 
+    /* Wait for FT5x06 to stabilize after reset */
+    vTaskDelay(pdMS_TO_TICKS(100));
+
     /* Verify chip ID (register 0xA8 = FT5x06 chip ID, usually 0x06) */
     uint8_t chip_id = 0;
     if (ft5x06_read_reg(0xA8, &chip_id, 1) == ESP_OK) {
-        ESP_LOGI(TAG, "FT5x06 chip ID: 0x%02X", chip_id);
+        ESP_LOGI(TAG, "FT5x06 chip ID: 0x%02X (expected 0x06)", chip_id);
+        if (chip_id != 0x06 && chip_id != 0x00) {
+            ESP_LOGW(TAG, "Unexpected chip ID - may not be FT5x06");
+        }
     } else {
-        ESP_LOGW(TAG, "Failed to read FT5x06 chip ID - continuing anyway");
+        ESP_LOGE(TAG, "Failed to read FT5x06 chip ID - I2C communication error!");
+        ESP_LOGE(TAG, "Check wiring: SDA=%d, SCL=%d, ADDR=0x%02X",
+                 TOUCH_I2C_SDA, TOUCH_I2C_SCL, TOUCH_I2C_ADDR);
+        /* Continue anyway - some clones don't respond to chip ID read */
+    }
+
+    /* Read firmware version (registers 0xA6-0xA7) */
+    uint8_t fw_ver[2] = {0};
+    if (ft5x06_read_reg(0xA6, fw_ver, 2) == ESP_OK) {
+        ESP_LOGI(TAG, "FT5x06 firmware: 0x%02X%02X", fw_ver[0], fw_ver[1]);
     }
 
     /* Configure interrupt mode (0x86 = polling mode) */
     ft5x06_write_reg(0x86, 0x01);
 
+    /* Test read of touch data register */
+    uint8_t test_data = 0;
+    if (ft5x06_read_reg(FT5X06_REG_NUM_TOUCHES, &test_data, 1) == ESP_OK) {
+        ESP_LOGI(TAG, "Touch data register readable: num_touches=0x%02X", test_data);
+    } else {
+        ESP_LOGE(TAG, "Cannot read touch data register - touch will not work!");
+    }
+
     touch_initialized = true;
-    ESP_LOGI(TAG, "FT5x06 initialized: SDA=%d, SCL=%d", TOUCH_I2C_SDA, TOUCH_I2C_SCL);
+    ESP_LOGI(TAG, "FT5x06 initialized successfully");
     return ESP_OK;
 }
 
 /*
  * Get current touch point
+ * Returns coordinates mapped to landscape (320x240) display
  */
 bool touch_driver_get_point(touch_point_t *pt)
 {
@@ -144,7 +153,7 @@ bool touch_driver_get_point(touch_point_t *pt)
 
     uint8_t data[6];
 
-    /* Read number of touches + first touch coordinates */
+    /* Read number of touches + first touch coordinates (regs 0x02-0x07) */
     if (ft5x06_read_reg(FT5X06_REG_NUM_TOUCHES, data, 6) != ESP_OK) {
         return false;
     }
@@ -154,16 +163,21 @@ bool touch_driver_get_point(touch_point_t *pt)
         return false;
     }
 
-    /* Parse touch 1 coordinates */
-    uint16_t x = ((uint16_t)(data[1] & 0x0F) << 8) | data[2];
-    uint16_t y = ((uint16_t)(data[3] & 0x0F) << 8) | data[4];
+    /* Parse touch 1 coordinates (12-bit format) */
+    uint16_t raw_x = ((uint16_t)(data[1] & 0x0F) << 8) | data[2];
+    uint16_t raw_y = ((uint16_t)(data[3] & 0x0F) << 8) | data[4];
 
-    /* Clamp to screen bounds */
-    if (x >= FT5X06_MAX_X) x = FT5X06_MAX_X - 1;
-    if (y >= FT5X06_MAX_Y) y = FT5X06_MAX_Y - 1;
+    /* Clamp to native panel bounds */
+    if (raw_x >= FT5X06_NATIVE_X) raw_x = FT5X06_NATIVE_X - 1;
+    if (raw_y >= FT5X06_NATIVE_Y) raw_y = FT5X06_NATIVE_Y - 1;
 
-    pt->x = x;
-    pt->y = y;
+    /* Map portrait (240x320) to landscape (320x240):
+     * landscape_x = native_y
+     * landscape_y = native_width - native_x  (mirror Y to match display)
+     */
+    pt->x = raw_y;
+    pt->y = FT5X06_NATIVE_X - 1 - raw_x;
+
     last_point = *pt;
     return true;
 }
