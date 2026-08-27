@@ -28,6 +28,7 @@ static lv_obj_t *welcome_bar = NULL;
 /* Menu objects */
 static lv_obj_t *btn_task1 = NULL;
 static lv_obj_t *btn_task2 = NULL;
+static lv_obj_t *btn_usb = NULL;
 static lv_obj_t *btn_settings = NULL;
 static lv_obj_t *status_label = NULL;
 
@@ -48,6 +49,7 @@ static lv_img_dsc_t task_img_dsc = {0};
 /* Callbacks */
 static void (*on_task1_cb)(void) = NULL;
 static void (*on_task2_cb)(void) = NULL;
+static void (*on_usb_cb)(void) = NULL;
 static void (*on_vol_change_cb)(uint8_t) = NULL;
 static void (*on_bright_change_cb)(uint8_t) = NULL;
 
@@ -67,11 +69,12 @@ static uint8_t settings_focus = 0;
 #define COLOR_SELECTED lv_color_hex(0x2D5F8A)
 
 /* ========== Callback Setters ========== */
-void ui_set_callbacks(void (*task1)(void), void (*task2)(void),
+void ui_set_callbacks(void (*task1)(void), void (*task2)(void), void (*usb)(void),
                       void (*vol)(uint8_t), void (*bright)(uint8_t))
 {
     on_task1_cb = task1;
     on_task2_cb = task2;
+    on_usb_cb = usb;
     on_vol_change_cb = vol;
     on_bright_change_cb = bright;
 }
@@ -104,6 +107,14 @@ static void btn_task2_handler(lv_event_t *e)
         if (status_label) {
             lv_label_set_text(status_label, "Task 2 Running");
         }
+    }
+}
+
+static void btn_usb_handler(lv_event_t *e)
+{
+    (void)e;
+    if (on_usb_cb) {
+        on_usb_cb();
     }
 }
 
@@ -195,10 +206,22 @@ static void create_menu_screen(void)
     lv_label_set_text(lbl_task2, LV_SYMBOL_PLAY " Task 2");
     lv_obj_center(lbl_task2);
 
+    /* USB Mode Button */
+    btn_usb = lv_btn_create(scr_menu);
+    lv_obj_set_size(btn_usb, 200, 40);
+    lv_obj_align(btn_usb, LV_ALIGN_TOP_MID, 0, 200);
+    lv_obj_set_style_bg_color(btn_usb, lv_color_hex(0x2D5F8A), 0);
+    lv_obj_set_style_radius(btn_usb, 6, 0);
+    lv_obj_add_event_cb(btn_usb, btn_usb_handler, LV_EVENT_CLICKED, NULL);
+    
+    lv_obj_t *lbl_usb = lv_label_create(btn_usb);
+    lv_label_set_text(lbl_usb, LV_SYMBOL_USB " USB Mode");
+    lv_obj_center(lbl_usb);
+
     /* Settings Button */
     btn_settings = lv_btn_create(scr_menu);
     lv_obj_set_size(btn_settings, 200, 40);
-    lv_obj_align(btn_settings, LV_ALIGN_TOP_MID, 0, 200);
+    lv_obj_align(btn_settings, LV_ALIGN_TOP_MID, 0, 250);
     lv_obj_set_style_bg_color(btn_settings, lv_color_hex(0x2D5F8A), 0);
     lv_obj_set_style_radius(btn_settings, 6, 0);
     lv_obj_add_event_cb(btn_settings, btn_settings_handler, LV_EVENT_CLICKED, NULL);

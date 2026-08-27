@@ -595,7 +595,7 @@ void app_main(void)
     ui_init();
 
     /* Set UI callbacks for new simplified UI */
-    ui_set_callbacks(on_task1_btn, on_task2_btn, on_volume_change, on_brightness_change);
+    ui_set_callbacks(on_task1_btn, on_task2_btn, on_usb_mode, on_volume_change, on_brightness_change);
 
     /* Show welcome screen */
     ui_show_welcome();
