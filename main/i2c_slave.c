@@ -59,7 +59,8 @@ static void i2c_slave_task(void *arg)
             if (len == 1 && data[0] == REG_COMMAND) {
                 // Master wants to read command register
                 // Prepare response in TX buffer
-                i2c_slave_write_buffer(I2C_SLAVE_PORT, &g_cmd_to_uno, 1, pdMS_TO_TICKS(10));
+                uint8_t cmd_val = g_cmd_to_uno;  // Copy to non-volatile local
+                i2c_slave_write_buffer(I2C_SLAVE_PORT, &cmd_val, 1, pdMS_TO_TICKS(10));
                 // Clear after sending (edge-triggered)
                 g_cmd_to_uno = 0;
                 continue;
