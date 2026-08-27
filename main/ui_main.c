@@ -261,7 +261,6 @@ static void create_menu_screen(void)
     lv_obj_t *title = lv_label_create(scr_menu);
     lv_label_set_text(title, "MP3 Player");
     lv_obj_set_style_text_color(title, COLOR_TEXT, 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
 
     /* Menu buttons - Center area (vertical layout) */
@@ -300,7 +299,6 @@ static void create_menu_screen(void)
     
     lv_obj_t *lbl_task1 = lv_label_create(btn_task1);
     lv_label_set_text(lbl_task1, "Task1");
-    lv_obj_set_style_text_font(lbl_task1, &lv_font_montserrat_12, 0);
     lv_obj_center(lbl_task1);
     
     /* Task button 2 */
@@ -314,21 +312,18 @@ static void create_menu_screen(void)
     
     lv_obj_t *lbl_task2 = lv_label_create(btn_task2);
     lv_label_set_text(lbl_task2, "Task2");
-    lv_obj_set_style_text_font(lbl_task2, &lv_font_montserrat_12, 0);
     lv_obj_center(lbl_task2);
     
     /* Status label - centered between task buttons */
     status_label = lv_label_create(scr_menu);
     lv_label_set_text(status_label, "Ready");
     lv_obj_set_style_text_color(status_label, COLOR_MUTED, 0);
-    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_10, 0);
     lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID, 0, -15);
 
     /* Hint text - very bottom */
     lv_obj_t *hint = lv_label_create(scr_menu);
     lv_label_set_text(hint, "GPIO: Up/Down");
     lv_obj_set_style_text_color(hint, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_text_font(hint, &lv_font_montserrat_8, 0);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -2);
 
     /* Focus first item */
