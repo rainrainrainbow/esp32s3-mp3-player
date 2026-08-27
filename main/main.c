@@ -231,30 +231,13 @@ static void i2c_cmd_task(void *param)
     while (1) {
         if (xQueueReceive(i2c_cmd_queue, &cmd, portMAX_DELAY)) {
             switch (cmd.type) {
-                case 1: { // Play track
+                case 1: { // Play track (legacy - not used in new UI)
                     uint8_t track = cmd.value;
-                    ESP_LOGI(TAG, "I2C CMD: Play track %d", track);
-                    current_track = track;
-                    preload_images_for_track(track);
-                    audio_player_play_track(track);
-                    is_playing = true;
-                    if (lvgl_port_lock(100)) {
-                        ui_show_playing(track);
-                        if (g_image_cache_count > 0) {
-                            ui_set_image(g_image_cache[0].pixels, g_image_cache[0].width, g_image_cache[0].height);
-                        }
-                        lvgl_port_unlock();
-                    }
+                    ESP_LOGI(TAG, "I2C CMD: Play track %d (ignored in new UI)", track);
                     break;
                 }
-                case 2: { // Stop
-                    ESP_LOGI(TAG, "I2C CMD: Stop");
-                    audio_player_stop();
-                    is_playing = false;
-                    if (lvgl_port_lock(100)) {
-                        ui_show_stopped();
-                        lvgl_port_unlock();
-                    }
+                case 2: { // Stop (legacy - not used in new UI)
+                    ESP_LOGI(TAG, "I2C CMD: Stop (ignored in new UI)");
                     break;
                 }
                 case 3: { // Volume
