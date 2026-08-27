@@ -66,8 +66,17 @@ static ui_state_t prev_state = UI_STATE_MENU;
 /* Settings focus: 0=volume, 1=brightness */
 static uint8_t settings_focus = 0;
 
+/* Task buttons */
+static lv_obj_t *btn_task1 = NULL;
+static lv_obj_t *btn_task2 = NULL;
+static lv_obj_t *status_label = NULL;
+static ui_task_btn_cb_t on_task1_cb = NULL;
+static ui_task_btn_cb_t on_task2_cb = NULL;
+
 /* Forward declarations */
 static void update_menu_focus(void);
+static void btn_task1_handler(lv_event_t *e);
+static void btn_task2_handler(lv_event_t *e);
 
 /* ========== Color Scheme ========== */
 #define COLOR_BG       lv_color_hex(0x1A1A2E)
@@ -89,6 +98,12 @@ void ui_set_callbacks(void (*prev)(void), void (*play)(void), void (*next)(void)
     on_vol_change_cb = vol;
     on_bright_change_cb = bright;
     on_usb_cb = usb;
+}
+
+void ui_set_task_callbacks(ui_task_btn_cb_t task1_cb, ui_task_btn_cb_t task2_cb)
+{
+    on_task1_cb = task1_cb;
+    on_task2_cb = task2_cb;
 }
 
 /* ========== Menu Button Handlers ========== */
@@ -184,6 +199,28 @@ static void bright_slider_handler(lv_event_t *e)
     if (on_bright_change_cb) on_bright_change_cb(val);
 }
 
+static void btn_task1_handler(lv_event_t *e)
+{
+    (void)e;
+    if (on_task1_cb) {
+        on_task1_cb();
+        if (status_label) {
+            lv_label_set_text(status_label, "Task 1 Sent");
+        }
+    }
+}
+
+static void btn_task2_handler(lv_event_t *e)
+{
+    (void)e;
+    if (on_task2_cb) {
+        on_task2_cb();
+        if (status_label) {
+            lv_label_set_text(status_label, "Task 2 Sent");
+        }
+    }
+}
+
 static void close_settings_handler(lv_event_t *e)
 {
     ui_hide_settings();
@@ -255,6 +292,34 @@ static void create_menu_screen(void)
     lv_label_set_text(hint, "GPIO0: Up  |  GPIO43: Down/Enter");
     lv_obj_set_style_text_color(hint, COLOR_MUTED, 0);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -10);
+
+    /* Task buttons */
+    btn_task1 = lv_btn_create(scr_menu);
+    lv_obj_set_size(btn_task1, 120, 40);
+    lv_obj_align(btn_task1, LV_ALIGN_BOTTOM_LEFT, 10, -60);
+    lv_obj_set_style_bg_color(btn_task1, COLOR_PRIMARY, 0);
+    lv_obj_set_style_bg_color(btn_task1, COLOR_ACCENT, LV_STATE_FOCUSED);
+    lv_obj_add_event_cb(btn_task1, btn_task1_handler, LV_EVENT_CLICKED, NULL);
+    
+    lv_obj_t *lbl_task1 = lv_label_create(btn_task1);
+    lv_label_set_text(lbl_task1, "TASK 1");
+    lv_obj_center(lbl_task1);
+    
+    btn_task2 = lv_btn_create(scr_menu);
+    lv_obj_set_size(btn_task2, 120, 40);
+    lv_obj_align(btn_task2, LV_ALIGN_BOTTOM_RIGHT, -10, -60);
+    lv_obj_set_style_bg_color(btn_task2, COLOR_PRIMARY, 0);
+    lv_obj_set_style_bg_color(btn_task2, COLOR_ACCENT, LV_STATE_FOCUSED);
+    lv_obj_add_event_cb(btn_task2, btn_task2_handler, LV_EVENT_CLICKED, NULL);
+    
+    lv_obj_t *lbl_task2 = lv_label_create(btn_task2);
+    lv_label_set_text(lbl_task2, "TASK 2");
+    lv_obj_center(lbl_task2);
+    
+    status_label = lv_label_create(scr_menu);
+    lv_label_set_text(status_label, "Ready");
+    lv_obj_set_style_text_color(status_label, COLOR_MUTED, 0);
+    lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID, 0, -65);
 
     /* Focus first item */
     lv_group_focus_obj(menu_btns[0]);
@@ -663,5 +728,12 @@ void ui_set_play_button_text(bool is_playing)
         if (lbl) {
             lv_label_set_text(lbl, is_playing ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
         }
+    }
+}
+
+void ui_set_task_status(const char *text)
+{
+    if (status_label) {
+        lv_label_set_text(status_label, text);
     }
 }
