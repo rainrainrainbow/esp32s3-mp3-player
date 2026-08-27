@@ -237,17 +237,32 @@ void Avoid_Obstacle(void);
 void Rgb_Task(void);
 void StartTable(int n);
 void StopToApp(void);
-void PollSlaveCommand(void);
+void PollSlaveCommand(void) {
+  static unsigned long lastPoll = 0;
+  if (millis() - lastPoll < 20) return;
+  lastPoll = millis();
 
-void setup() {
-  Serial.begin(9600);
-  FastLED.addLeds<WS2812, ledPin, RGB>(rgbs, 1);
-  Wire.begin();
-  Motor_Init();
-#if NOTONE
-  tone(buzzerPin, 1200); delay(100); noTone(buzzerPin);
-#endif
-  Serial.println("System Ready V4.7");
+  // 直接读取（ESP32已预加载命令到TX缓冲区）
+  Wire.requestFrom(MP3_PLAYER_I2C_ADDR, 1);
+  if (Wire.available()) {
+    uint8_t cmd = Wire.read();
+    switch (cmd) {
+      case CMD_TASK1:
+        Serial.println("CMD: Execute Table 1");
+        StartTable(1);
+        break;
+      case CMD_TASK2:
+        Serial.println("CMD: Execute Table 2");
+        StartTable(2);
+        break;
+      case CMD_STOP:
+        Serial.println("CMD: Stop Task");
+        StopToApp();
+        break;
+      default:
+        break;
+    }
+  }
 }
 
 void loop() {
@@ -308,11 +323,7 @@ void PollSlaveCommand(void) {
   if (millis() - lastPoll < 20) return;
   lastPoll = millis();
 
-  Wire.beginTransmission(MP3_PLAYER_I2C_ADDR);
-  Wire.write(0x10);
-  byte err = Wire.endTransmission(false);
-  if (err != 0) return;
-
+  // 直接读取（ESP32已预加载命令到TX缓冲区）
   Wire.requestFrom(MP3_PLAYER_I2C_ADDR, 1);
   if (Wire.available()) {
     uint8_t cmd = Wire.read();

@@ -33,7 +33,8 @@ static uint8_t last_reg_addr = 0;
 // Command register (S3→Uno)
 static volatile uint8_t g_cmd_to_uno = 0;
 static volatile TickType_t cmd_timestamp = 0;
-#define CMD_AUTO_CLEAR_MS 500  // Auto-clear command after 500ms
+static volatile bool cmd_pending = false;  // Prevents status from overwriting TX buffer
+#define CMD_AUTO_CLEAR_MS 2000  // Auto-clear command after 2s
 
 /**
  * @brief I2C slave polling task
@@ -46,6 +47,7 @@ static void i2c_slave_task(void *arg)
         // Auto-clear command register if timeout
         if (g_cmd_to_uno != 0 && (xTaskGetTickCount() - cmd_timestamp) > pdMS_TO_TICKS(CMD_AUTO_CLEAR_MS)) {
             g_cmd_to_uno = 0;
+            cmd_pending = false;
         }
         
         // Try to read data from I2C slave buffer
@@ -63,6 +65,7 @@ static void i2c_slave_task(void *arg)
                 i2c_slave_write_buffer(I2C_SLAVE_PORT, &cmd_val, 1, pdMS_TO_TICKS(10));
                 // Clear after sending (edge-triggered)
                 g_cmd_to_uno = 0;
+                cmd_pending = false;
                 continue;
             }
             
@@ -171,8 +174,11 @@ void i2c_slave_set_callbacks(
 void i2c_slave_set_status(uint8_t status)
 {
     reg_play_status = status;
-    // Pre-load into TX buffer for master read
-    i2c_slave_write_buffer(I2C_SLAVE_PORT, (const uint8_t *)&reg_play_status, 1, pdMS_TO_TICKS(10));
+    // Only pre-load status if no command is pending
+    // (command takes priority in TX buffer)
+    if (!cmd_pending) {
+        i2c_slave_write_buffer(I2C_SLAVE_PORT, (const uint8_t *)&reg_play_status, 1, pdMS_TO_TICKS(10));
+    }
 }
 
 void i2c_slave_set_current_track(uint8_t track)
@@ -210,6 +216,10 @@ void i2c_slave_set_command(uint8_t cmd)
     if (cmd == CMD_TASK1 || cmd == CMD_TASK2 || cmd == CMD_STOP_TASK) {
         g_cmd_to_uno = cmd;
         cmd_timestamp = xTaskGetTickCount();
-        ESP_LOGI(TAG, "Command set: 0x%02X", cmd);
+        cmd_pending = true;  // Block status from overwriting TX buffer
+        // Pre-load into TX buffer immediately for master read
+        uint8_t cmd_val = cmd;
+        i2c_slave_write_buffer(I2C_SLAVE_PORT, &cmd_val, 1, pdMS_TO_TICKS(10));
+        ESP_LOGI(TAG, "Command set: 0x%02X (pre-loaded to TX buffer)", cmd);
     }
 }
