@@ -30,7 +30,7 @@ static i2c_brightness_cb_t brightness_callback = NULL;
 // Track last register address for read operations
 static uint8_t last_reg_addr = 0;
 
-// Command register (S3→Uno)
+// Command register (S3->Uno)
 static volatile uint8_t g_cmd_to_uno = 0;
 static volatile TickType_t cmd_timestamp = 0;
 static volatile bool cmd_pending = false;  // Prevents status from overwriting TX buffer
