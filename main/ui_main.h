@@ -37,10 +37,11 @@ typedef void (*ui_usb_cb_t)(void);
 void ui_init(void);
 
 /**
- * @brief Set UI event callbacks for simplified UI
+ * @brief Set UI event callbacks (music control + settings)
  */
-void ui_set_callbacks(void (*task1)(void), void (*task2)(void), void (*usb)(void),
-                      void (*vol)(uint8_t), void (*bright)(uint8_t));
+void ui_set_callbacks(void (*prev)(void), void (*play)(void), void (*next)(void),
+                      void (*vol)(uint8_t), void (*bright)(uint8_t),
+                      void (*usb)(void));
 
 /**
  * @brief Set menu item execution callbacks (for touch click)
