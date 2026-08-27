@@ -237,34 +237,6 @@ void Avoid_Obstacle(void);
 void Rgb_Task(void);
 void StartTable(int n);
 void StopToApp(void);
-void PollSlaveCommand(void) {
-  static unsigned long lastPoll = 0;
-  if (millis() - lastPoll < 20) return;
-  lastPoll = millis();
-
-  // 直接读取（ESP32已预加载命令到TX缓冲区）
-  Wire.requestFrom(MP3_PLAYER_I2C_ADDR, 1);
-  if (Wire.available()) {
-    uint8_t cmd = Wire.read();
-    switch (cmd) {
-      case CMD_TASK1:
-        Serial.println("CMD: Execute Table 1");
-        StartTable(1);
-        break;
-      case CMD_TASK2:
-        Serial.println("CMD: Execute Table 2");
-        StartTable(2);
-        break;
-      case CMD_STOP:
-        Serial.println("CMD: Stop Task");
-        StopToApp();
-        break;
-      default:
-        break;
-    }
-  }
-}
-
 void loop() {
   currentA3Value = analogRead(A3);
   Key_Control_Task();
