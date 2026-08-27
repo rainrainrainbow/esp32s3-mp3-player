@@ -204,6 +204,19 @@ static void on_brightness_change(uint8_t bright)
     save_settings();
 }
 
+/* ========== Car Task Control (button -> I2C slave pending command) ========== */
+static void on_task1(void)
+{
+    ESP_LOGI(TAG, "UI: Task A requested");
+    i2c_slave_set_task_command(TASK_CMD_ACTION1);
+}
+
+static void on_task2(void)
+{
+    ESP_LOGI(TAG, "UI: Task B requested");
+    i2c_slave_set_task_command(TASK_CMD_ACTION2);
+}
+
 /* ========== I2C Command Queue ========== */
 typedef struct {
     uint8_t type; // 1=play, 2=stop, 3=volume, 4=brightness
@@ -466,7 +479,8 @@ void app_main(void)
     ui_init();
 
     /* Set UI callbacks */
-    ui_set_callbacks(on_prev, on_play, on_next, on_volume_change, on_brightness_change);
+    ui_set_callbacks(on_prev, on_play, on_next, on_volume_change, on_brightness_change,
+                     on_task1, on_task2);
 
     /* Show welcome screen */
     ui_show_welcome();

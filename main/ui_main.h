@@ -13,7 +13,8 @@ typedef enum {
     UI_STATE_WELCOME = 0,
     UI_STATE_PLAYING,
     UI_STATE_STOPPED,
-    UI_STATE_SETTINGS
+    UI_STATE_SETTINGS,
+    UI_STATE_CONTROL
 } ui_state_t;
 
 /* Callback types for UI events */
@@ -29,7 +30,8 @@ void ui_init(void);
  * @brief Set UI event callbacks
  */
 void ui_set_callbacks(ui_btn_cb_t prev_cb, ui_btn_cb_t play_cb, ui_btn_cb_t next_cb,
-                      ui_slider_cb_t vol_cb, ui_slider_cb_t bright_cb);
+                      ui_slider_cb_t vol_cb, ui_slider_cb_t bright_cb,
+                      ui_btn_cb_t task1_cb, ui_btn_cb_t task2_cb);
 
 /**
  * @brief Show welcome screen
@@ -50,6 +52,11 @@ void ui_show_stopped(void);
  * @brief Show settings menu
  */
 void ui_show_settings(void);
+
+/**
+ * @brief Show car control screen (task buttons)
+ */
+void ui_show_control(void);
 
 /**
  * @brief Hide settings menu

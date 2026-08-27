@@ -20,6 +20,7 @@ static ui_state_t current_state = UI_STATE_WELCOME;
 static lv_obj_t *scr_welcome = NULL;
 static lv_obj_t *scr_playing = NULL;
 static lv_obj_t *scr_stopped = NULL;
+static lv_obj_t *scr_control = NULL;
 static lv_obj_t *settings_panel = NULL;
 
 /* Welcome screen objects */
@@ -46,6 +47,8 @@ static void (*on_play_cb)(void) = NULL;
 static void (*on_next_cb)(void) = NULL;
 static void (*on_vol_change_cb)(uint8_t) = NULL;
 static void (*on_bright_change_cb)(uint8_t) = NULL;
+static void (*on_task1_cb)(void) = NULL;
+static void (*on_task2_cb)(void) = NULL;
 
 /* ========== Color Scheme ========== */
 #define COLOR_BG       lv_color_hex(0x1A1A2E)
@@ -57,13 +60,16 @@ static void (*on_bright_change_cb)(uint8_t) = NULL;
 
 /* ========== Callback Setters ========== */
 void ui_set_callbacks(void (*prev)(void), void (*play)(void), void (*next)(void),
-                      void (*vol)(uint8_t), void (*bright)(uint8_t))
+                      void (*vol)(uint8_t), void (*bright)(uint8_t),
+                      void (*task1)(void), void (*task2)(void))
 {
     on_prev_cb = prev;
     on_play_cb = play;
     on_next_cb = next;
     on_vol_change_cb = vol;
     on_bright_change_cb = bright;
+    on_task1_cb = task1;
+    on_task2_cb = task2;
 }
 
 /* ========== Button Event Handlers ========== */
@@ -80,6 +86,26 @@ static void btn_play_handler(lv_event_t *e)
 static void btn_next_handler(lv_event_t *e)
 {
     if (on_next_cb) on_next_cb();
+}
+
+static void btn_task1_handler(lv_event_t *e)
+{
+    if (on_task1_cb) on_task1_cb();
+}
+
+static void btn_task2_handler(lv_event_t *e)
+{
+    if (on_task2_cb) on_task2_cb();
+}
+
+static void btn_open_control_handler(lv_event_t *e)
+{
+    ui_show_control();
+}
+
+static void btn_stopped_handler(lv_event_t *e)
+{
+    ui_show_stopped();
 }
 
 static void vol_slider_handler(lv_event_t *e)
@@ -219,6 +245,16 @@ static void create_stopped_screen(void)
     lv_label_set_text(track_info, "Track 1");
     lv_obj_set_style_text_color(track_info, COLOR_TEXT, 0);
     lv_obj_align(track_info, LV_ALIGN_CENTER, 0, 50);
+
+    /* Car control entry button */
+    lv_obj_t *btn_car = lv_btn_create(scr_stopped);
+    lv_obj_set_size(btn_car, 100, 36);
+    lv_obj_align(btn_car, LV_ALIGN_BOTTOM_MID, 0, -15);
+    lv_obj_set_style_bg_color(btn_car, COLOR_PRIMARY, 0);
+    lv_obj_t *car_lbl = lv_label_create(btn_car);
+    lv_label_set_text(car_lbl, "CAR");
+    lv_obj_center(car_lbl);
+    lv_obj_add_event_cb(btn_car, btn_open_control_handler, LV_EVENT_CLICKED, NULL);
 }
 
 /* ========== Create Settings Panel ========== */
@@ -290,6 +326,56 @@ static void create_settings_panel(void)
     lv_obj_add_flag(settings_panel, LV_OBJ_FLAG_HIDDEN);
 }
 
+/* ========== Create Car Control Screen ========== */
+static void create_control_screen(void)
+{
+    scr_control = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr_control, COLOR_BG, 0);
+
+    /* Title */
+    lv_obj_t *title = lv_label_create(scr_control);
+    lv_label_set_text(title, "Car Control");
+    lv_obj_set_style_text_color(title, COLOR_TEXT, 0);
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+
+    /* Task A button */
+    lv_obj_t *btn_task1 = lv_btn_create(scr_control);
+    lv_obj_set_size(btn_task1, 180, 70);
+    lv_obj_align(btn_task1, LV_ALIGN_CENTER, 0, -60);
+    lv_obj_set_style_bg_color(btn_task1, COLOR_ACCENT, 0);
+    lv_obj_t *task1_lbl = lv_label_create(btn_task1);
+    lv_label_set_text(task1_lbl, "TASK A");
+    lv_obj_center(task1_lbl);
+    lv_obj_add_event_cb(btn_task1, btn_task1_handler, LV_EVENT_CLICKED, NULL);
+
+    /* Task B button */
+    lv_obj_t *btn_task2 = lv_btn_create(scr_control);
+    lv_obj_set_size(btn_task2, 180, 70);
+    lv_obj_align(btn_task2, LV_ALIGN_CENTER, 0, 40);
+    lv_obj_set_style_bg_color(btn_task2, COLOR_PRIMARY, 0);
+    lv_obj_t *task2_lbl = lv_label_create(btn_task2);
+    lv_label_set_text(task2_lbl, "TASK B");
+    lv_obj_center(task2_lbl);
+    lv_obj_add_event_cb(btn_task2, btn_task2_handler, LV_EVENT_CLICKED, NULL);
+
+    /* Back hint */
+    lv_obj_t *hint = lv_label_create(scr_control);
+    lv_label_set_text(hint, "GPIO43 long press: settings");
+    lv_obj_set_style_text_color(hint, COLOR_MUTED, 0);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -10);
+
+    /* Back button (to stopped screen) */
+    lv_obj_t *btn_back = lv_btn_create(scr_control);
+    lv_obj_set_size(btn_back, 70, 32);
+    lv_obj_align(btn_back, LV_ALIGN_BOTTOM_LEFT, 10, -8);
+    lv_obj_set_style_bg_color(btn_back, COLOR_SURFACE, 0);
+    lv_obj_t *back_lbl = lv_label_create(btn_back);
+    lv_label_set_text(back_lbl, LV_SYMBOL_LEFT);
+    lv_obj_center(back_lbl);
+    lv_obj_add_event_cb(btn_back, btn_stopped_handler, LV_EVENT_CLICKED, NULL);
+}
+
 /* ========== Public API ========== */
 
 void ui_init(void)
@@ -300,6 +386,7 @@ void ui_init(void)
     create_playing_screen();
     create_stopped_screen();
     create_settings_panel();
+    create_control_screen();
 
     /* Show welcome screen by default */
     lv_scr_load(scr_welcome);
@@ -341,6 +428,14 @@ void ui_show_settings(void)
         lv_obj_clear_flag(settings_panel, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(settings_panel);
         current_state = UI_STATE_SETTINGS;
+    }
+}
+
+void ui_show_control(void)
+{
+    if (scr_control) {
+        lv_scr_load(scr_control);
+        current_state = UI_STATE_CONTROL;
     }
 }
 

@@ -18,6 +18,9 @@ static uint8_t reg_brightness = 75;
 static volatile uint8_t pending_track = 0;
 static volatile bool stop_requested = false;
 
+// Pending car task command (master polls via I2C, cleared on read)
+static volatile uint8_t pending_task_cmd = TASK_CMD_NONE;
+
 // Callbacks
 static i2c_play_track_cb_t play_callback = NULL;
 static i2c_stop_cb_t stop_callback = NULL;
@@ -29,6 +32,41 @@ static i2c_brightness_cb_t brightness_callback = NULL;
 
 // Track last register address for read operations
 static uint8_t last_reg_addr = 0;
+
+/**
+ * @brief Pre-load the TX buffer with the value of the given register address
+ *        so that the I2C master's requestFrom() reads the correct register.
+ *        Called when master does a single-byte register-set (read request).
+ */
+static void preload_reg_value(uint8_t reg)
+{
+    uint8_t val = 0;
+
+    switch (reg) {
+        case REG_PLAY_STATUS:
+            val = reg_play_status;
+            break;
+        case REG_CURRENT_TRACK:
+            val = reg_current_track;
+            break;
+        case REG_VOLUME:
+            val = reg_volume;
+            break;
+        case REG_BRIGHTNESS:
+            val = reg_brightness;
+            break;
+        case REG_TASK_COMMAND:
+            // Read-once semantics: return pending command then clear it
+            val = pending_task_cmd;
+            pending_task_cmd = TASK_CMD_NONE;
+            break;
+        default:
+            val = 0;
+            break;
+    }
+
+    i2c_slave_write_buffer(I2C_SLAVE_PORT, &val, 1, pdMS_TO_TICKS(10));
+}
 
 /**
  * @brief I2C slave polling task
@@ -44,7 +82,14 @@ static void i2c_slave_task(void *arg)
         if (len > 0) {
             // First byte is register address
             last_reg_addr = data[0];
-            
+
+            if (len == 1) {
+                // Master only wrote a register address => it intends to READ that register.
+                // Pre-load the matching value into the TX buffer.
+                preload_reg_value(data[0]);
+                continue;
+            }
+
             // Process write commands (register + value)
             if (len >= 2) {
                 uint8_t reg = data[0];
@@ -80,6 +125,13 @@ static void i2c_slave_task(void *arg)
                             ESP_LOGI(TAG, "I2C: Brightness = %d", val);
                             reg_brightness = val;
                             if (brightness_callback) brightness_callback(val);
+                        }
+                        break;
+
+                    case REG_TASK_COMMAND:
+                        if (val == TASK_CMD_ACTION1 || val == TASK_CMD_ACTION2) {
+                            ESP_LOGI(TAG, "I2C: Task command %d", val);
+                            pending_task_cmd = val;
                         }
                         break;
                 }
@@ -173,4 +225,19 @@ bool i2c_slave_get_stop_requested(void)
 void i2c_slave_clear_stop_request(void)
 {
     stop_requested = false;
+}
+
+void i2c_slave_set_task_command(uint8_t cmd)
+{
+    if (cmd == TASK_CMD_ACTION1 || cmd == TASK_CMD_ACTION2) {
+        pending_task_cmd = cmd;
+        ESP_LOGI(TAG, "I2C: task command set to %d", cmd);
+    }
+}
+
+uint8_t i2c_slave_get_pending_task(void)
+{
+    uint8_t cmd = pending_task_cmd;
+    pending_task_cmd = TASK_CMD_NONE;
+    return cmd;
 }
