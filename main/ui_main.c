@@ -17,15 +17,12 @@ static const char *TAG = "UI";
 static ui_state_t current_state = UI_STATE_WELCOME;
 
 /* UI object pointers */
-static lv_obj_t *scr_welcome = NULL;
+//static lv_obj_t *scr_welcome = NULL;   /* Welcome screen removed */
 static lv_obj_t *scr_menu = NULL;
 static lv_obj_t *scr_playing = NULL;    /* Music playing screen */
 static lv_obj_t *scr_stopped = NULL;    /* Music stopped screen */
 static lv_obj_t *scr_task_running = NULL;
 static lv_obj_t *settings_panel = NULL;
-
-/* Welcome screen objects */
-static lv_obj_t *welcome_bar = NULL;
 
 /* Menu objects */
 static lv_obj_t *btn_play = NULL;       /* Play/Pause button in menu */
@@ -181,30 +178,7 @@ static void bright_slider_handler(lv_event_t *e)
     if (on_bright_change_cb) on_bright_change_cb(val);
 }
 
-/* ========== Create Welcome Screen ========== */
-static void create_welcome_screen(void)
-{
-    scr_welcome = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr_welcome, COLOR_BG, 0);
-
-    lv_obj_t *welcome_label = lv_label_create(scr_welcome);
-    lv_label_set_text(welcome_label, "Smart Car\nController");
-    lv_obj_set_style_text_color(welcome_label, COLOR_TEXT, 0);
-    lv_obj_set_style_text_align(welcome_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(welcome_label, LV_ALIGN_CENTER, 0, -30);
-
-    welcome_bar = lv_bar_create(scr_welcome);
-    lv_obj_set_size(welcome_bar, 200, 6);
-    lv_obj_align(welcome_bar, LV_ALIGN_CENTER, 0, 30);
-    lv_obj_set_style_bg_color(welcome_bar, COLOR_SURFACE, 0);
-    lv_obj_set_style_bg_color(welcome_bar, COLOR_ACCENT, LV_PART_INDICATOR);
-    lv_bar_set_value(welcome_bar, 0, LV_ANIM_OFF);
-
-    lv_obj_t *loading = lv_label_create(scr_welcome);
-    lv_label_set_text(loading, "Initializing...");
-    lv_obj_set_style_text_color(loading, COLOR_MUTED, 0);
-    lv_obj_align(loading, LV_ALIGN_CENTER, 0, 50);
-}
+/* ========== Welcome Screen (removed - boot directly into menu) ========== */
 
 /* ========== Create Main Menu Screen ========== */
 static void create_menu_screen(void)
@@ -415,26 +389,21 @@ static void create_settings_panel(void)
 void ui_init(void)
 {
     ESP_LOGI(TAG, "Creating UI screens...");
-
-    //create_welcome_screen();
+    // Welcome screen removed - boot directly into main menu
     create_menu_screen();
     create_playing_screen();
     create_stopped_screen();
     create_task_running_screen();
     create_settings_panel();
-
-    lv_scr_load(scr_welcome);
-    current_state = UI_STATE_WELCOME;
-
+    lv_scr_load(scr_menu);
+    current_state = UI_STATE_MENU;
     ESP_LOGI(TAG, "UI initialized");
 }
 
 void ui_show_welcome(void)
 {
-    if (scr_welcome) {
-        lv_scr_load(scr_welcome);
-        current_state = UI_STATE_WELCOME;
-    }
+    /* Welcome screen removed - fall back to main menu */
+    ui_show_menu();
 }
 
 void ui_show_menu(void)

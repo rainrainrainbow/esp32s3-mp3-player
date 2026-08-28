@@ -588,10 +588,6 @@ void app_main(void)
     /* Initialize audio */
     audio_player_init();
     apply_volume();
-
-    /* Play diagnostic test tone BEFORE LVGL starts (no LVGL task interference) */
-    audio_player_play_test_tone();
-
     /* Initialize TFT */
     tft_init();
     tft_fill_screen(0x0000);
@@ -604,8 +600,7 @@ void app_main(void)
     /* Set UI callbacks - includes both music control and task buttons */
     ui_set_callbacks(on_prev, on_play, on_next, on_volume_change, on_brightness_change, on_usb_mode);
     ui_set_task_callbacks(on_task1_btn, on_task2_btn);
-    /* Show welcome screen */
-    ui_show_welcome();
+    /* Boot directly into main menu (welcome screen removed) */
     vTaskDelay(pdMS_TO_TICKS(500));
 
     /* Create I2C command queue (depth=10) */
