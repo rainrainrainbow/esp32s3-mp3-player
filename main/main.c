@@ -147,6 +147,7 @@ static void preload_images_for_track(uint8_t track);
 static uint8_t max_tracks = 0;
 static uint8_t current_track = 1;
 static bool is_playing = false;
+static bool g_in_task = false;   /* True when Uno is executing a preset task */
 
 static void on_prev(void)
 {
@@ -309,9 +310,19 @@ static void i2c_cmd_task(void *param)
                     ESP_LOGI(TAG, "I2C CMD: Stop");
                     audio_player_stop();
                     is_playing = false;
-                    if (lvgl_port_lock(100)) {
-                        ui_show_stopped();
-                        lvgl_port_unlock();
+                    if (g_in_task) {
+                        /* Task finished - return to main menu */
+                        ESP_LOGI(TAG, "Task finished, returning to menu");
+                        g_in_task = false;
+                        if (lvgl_port_lock(100)) {
+                            ui_return_to_menu();
+                            lvgl_port_unlock();
+                        }
+                    } else {
+                        if (lvgl_port_lock(100)) {
+                            ui_show_stopped();
+                            lvgl_port_unlock();
+                        }
                     }
                     break;
                 }
@@ -440,8 +451,9 @@ static void on_task1_btn(void)
 {
     ESP_LOGI(TAG, "Task 1 button pressed - sending command 0xA1");
     i2c_slave_set_command(CMD_TASK1);
+    g_in_task = true;
     
-    // Load and display startup image
+    // Load and display startup image (0.png)
     load_startup_image();
     if (g_startup_image_loaded && g_startup_image.pixels) {
         if (lvgl_port_lock(100)) {
@@ -455,8 +467,9 @@ static void on_task2_btn(void)
 {
     ESP_LOGI(TAG, "Task 2 button pressed - sending command 0xA2");
     i2c_slave_set_command(CMD_TASK2);
+    g_in_task = true;
     
-    // Load and display startup image
+    // Load and display startup image (0.png)
     load_startup_image();
     if (g_startup_image_loaded && g_startup_image.pixels) {
         if (lvgl_port_lock(100)) {
@@ -485,10 +498,17 @@ static void button_task(void *param)
             if (gpio_get_level(GPIO_NUM_0) == 0) {
                 ui_state_t state = ui_get_state();
                 
-                if (state == UI_STATE_TASK_RUNNING) {
+                /* Exit task when running a preset task (regardless of
+                 * whether currently showing startup image or playing music) */
+                if (g_in_task &&
+                    (state == UI_STATE_TASK_RUNNING || state == UI_STATE_PLAYING ||
+                     state == UI_STATE_STOPPED)) {
                     /* Send stop command to Uno and return to menu */
                     ESP_LOGI(TAG, "GPIO0: Exiting task, sending stop command");
                     i2c_slave_set_command(CMD_STOP_TASK);
+                    g_in_task = false;
+                    audio_player_stop();
+                    is_playing = false;
                     if (lvgl_port_lock(100)) {
                         ui_return_to_menu();
                         lvgl_port_unlock();
