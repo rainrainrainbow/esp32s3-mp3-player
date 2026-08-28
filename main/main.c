@@ -427,7 +427,10 @@ static void list_flash_tree(const char *path, int depth)
     closedir(dir);
 }
 
-/* ========== Load Startup Image (0.png) ========== */
+/* ========== Load Startup Image (0.jpg) ==========
+ * The image decoder only supports JPEG (.jpg) and BMP (.bmp), NOT PNG.
+ * Place the startup image at /spiflash/images/0/0.jpg
+ */
 static decoded_image_t g_startup_image = {0};
 static bool g_startup_image_loaded = false;
 
@@ -435,7 +438,7 @@ static void load_startup_image(void)
 {
     if (g_startup_image_loaded) return;
     
-    const char *img_path = "/spiflash/images/0/0.png";
+    const char *img_path = "/spiflash/images/0/0.jpg";
     ESP_LOGI(TAG, "Loading startup image: %s", img_path);
     
     if (decode_image_file(img_path, DISPLAY_WIDTH, DISPLAY_HEIGHT, &g_startup_image)) {
@@ -543,7 +546,12 @@ static void button_task(void *param)
                         ui_settings_adjust(1);
                         lvgl_port_unlock();
                     }
-                } else if (state == UI_STATE_MENU || state == UI_STATE_TASK_RUNNING) {
+                } else if (state == UI_STATE_MENU ||
+                           /* Task running: open settings anytime during a task,
+                            * whether showing startup image or playing music */
+                           (g_in_task &&
+                            (state == UI_STATE_TASK_RUNNING || state == UI_STATE_PLAYING ||
+                             state == UI_STATE_STOPPED))) {
                     /* Open settings from menu or task screen */
                     if (lvgl_port_lock(100)) {
                         ui_show_settings();
