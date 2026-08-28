@@ -212,75 +212,62 @@ static void create_menu_screen(void)
     scr_menu = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr_menu, COLOR_BG, 0);
 
-    /* Title */
-    lv_obj_t *title = lv_label_create(scr_menu);
-    lv_label_set_text(title, "Smart Car Controller");
-    lv_obj_set_style_text_color(title, COLOR_TEXT, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 15);
-
     /* Task Button 1 */
     btn_task1 = lv_btn_create(scr_menu);
-    lv_obj_set_size(btn_task1, 200, 50);
-    lv_obj_align(btn_task1, LV_ALIGN_TOP_MID, 0, 70);
+    lv_obj_set_size(btn_task1, DISPLAY_WIDTH - 80, 50);
+    lv_obj_align(btn_task1, LV_ALIGN_TOP_MID, 0, 15);
     lv_obj_set_style_bg_color(btn_task1, COLOR_PRIMARY, 0);
     lv_obj_set_style_bg_color(btn_task1, COLOR_ACCENT, LV_STATE_FOCUSED);
-    lv_obj_set_style_radius(btn_task1, 8, 0);
+    lv_obj_set_style_radius(btn_task1, 10, 0);
     lv_obj_add_event_cb(btn_task1, btn_task1_handler, LV_EVENT_CLICKED, NULL);
-    
+
     lv_obj_t *lbl_task1 = lv_label_create(btn_task1);
     lv_label_set_text(lbl_task1, LV_SYMBOL_PLAY " Task 1");
     lv_obj_center(lbl_task1);
 
     /* Task Button 2 */
     btn_task2 = lv_btn_create(scr_menu);
-    lv_obj_set_size(btn_task2, 200, 50);
-    lv_obj_align(btn_task2, LV_ALIGN_TOP_MID, 0, 135);
+    lv_obj_set_size(btn_task2, DISPLAY_WIDTH - 80, 50);
+    lv_obj_align(btn_task2, LV_ALIGN_TOP_MID, 0, 75);
     lv_obj_set_style_bg_color(btn_task2, COLOR_PRIMARY, 0);
     lv_obj_set_style_bg_color(btn_task2, COLOR_ACCENT, LV_STATE_FOCUSED);
-    lv_obj_set_style_radius(btn_task2, 8, 0);
+    lv_obj_set_style_radius(btn_task2, 10, 0);
     lv_obj_add_event_cb(btn_task2, btn_task2_handler, LV_EVENT_CLICKED, NULL);
-    
+
     lv_obj_t *lbl_task2 = lv_label_create(btn_task2);
     lv_label_set_text(lbl_task2, LV_SYMBOL_PLAY " Task 2");
     lv_obj_center(lbl_task2);
 
     /* USB Mode Button */
     btn_usb = lv_btn_create(scr_menu);
-    lv_obj_set_size(btn_usb, 200, 40);
-    lv_obj_align(btn_usb, LV_ALIGN_TOP_MID, 0, 200);
+    lv_obj_set_size(btn_usb, DISPLAY_WIDTH - 80, 45);
+    lv_obj_align(btn_usb, LV_ALIGN_TOP_MID, 0, 130);
     lv_obj_set_style_bg_color(btn_usb, lv_color_hex(0x2D5F8A), 0);
-    lv_obj_set_style_radius(btn_usb, 6, 0);
+    lv_obj_set_style_radius(btn_usb, 8, 0);
     lv_obj_add_event_cb(btn_usb, btn_usb_handler, LV_EVENT_CLICKED, NULL);
-    
+
     lv_obj_t *lbl_usb = lv_label_create(btn_usb);
     lv_label_set_text(lbl_usb, LV_SYMBOL_USB " USB Mode");
     lv_obj_center(lbl_usb);
 
     /* Settings Button */
     btn_settings = lv_btn_create(scr_menu);
-    lv_obj_set_size(btn_settings, 200, 40);
-    lv_obj_align(btn_settings, LV_ALIGN_TOP_MID, 0, 250);
+    lv_obj_set_size(btn_settings, DISPLAY_WIDTH - 80, 45);
+    lv_obj_align(btn_settings, LV_ALIGN_TOP_MID, 0, 185);
     lv_obj_set_style_bg_color(btn_settings, lv_color_hex(0x2D5F8A), 0);
-    lv_obj_set_style_radius(btn_settings, 6, 0);
+    lv_obj_set_style_radius(btn_settings, 8, 0);
     lv_obj_add_event_cb(btn_settings, btn_settings_handler, LV_EVENT_CLICKED, NULL);
-    
+
     lv_obj_t *lbl_settings = lv_label_create(btn_settings);
     lv_label_set_text(lbl_settings, LV_SYMBOL_SETTINGS " Settings");
     lv_obj_center(lbl_settings);
 
-    /* Status label */
+    /* Status label (bottom) */
     status_label = lv_label_create(scr_menu);
     lv_label_set_text(status_label, "Ready");
     lv_obj_set_style_text_color(status_label, COLOR_MUTED, 0);
-    lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID, 0, -20);
-
-    /* Hint text */
-    lv_obj_t *hint = lv_label_create(scr_menu);
-    lv_label_set_text(hint, "GPIO0: Exit | GPIO43: Settings");
-    lv_obj_set_style_text_color(hint, lv_color_hex(0x666666), 0);
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -5);
+    lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID , 0, -4);
 }
-
 /* ========== Create Playing Screen ========== */
 static void create_playing_screen(void)
 {
