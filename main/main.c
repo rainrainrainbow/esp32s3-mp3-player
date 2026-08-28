@@ -595,7 +595,7 @@ void app_main(void)
 
     /* Set UI callbacks - includes both music control and task buttons */
     ui_set_callbacks(on_prev, on_play, on_next, on_volume_change, on_brightness_change, on_usb_mode);
-
+    ui_set_task_callbacks(on_task1_btn, on_task2_btn);
     /* Show welcome screen */
     ui_show_welcome();
     vTaskDelay(pdMS_TO_TICKS(500));
