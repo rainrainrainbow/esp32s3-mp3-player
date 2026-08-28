@@ -262,11 +262,11 @@ static void create_menu_screen(void)
     lv_label_set_text(lbl_settings, LV_SYMBOL_SETTINGS " Settings");
     lv_obj_center(lbl_settings);
 
-    /* Status label (bottom) */
+    /* Status label (bottom) 
     status_label = lv_label_create(scr_menu);
     lv_label_set_text(status_label, "Ready");
     lv_obj_set_style_text_color(status_label, COLOR_MUTED, 0);
-    lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID , 0, -4);
+    lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID , 0, -4);*/
 }
 /* ========== Create Playing Screen ========== */
 static void create_playing_screen(void)
@@ -416,7 +416,7 @@ void ui_init(void)
 {
     ESP_LOGI(TAG, "Creating UI screens...");
 
-    create_welcome_screen();
+    //create_welcome_screen();
     create_menu_screen();
     create_playing_screen();
     create_stopped_screen();
