@@ -142,6 +142,7 @@ static void preload_images_for_track(uint8_t track)
 /* ========== Forward Declarations ========== */
 static uint8_t scan_mp3_tracks(void);
 static void preload_images_for_track(uint8_t track);
+static void ensure_app_mode(void);
 
 /* ========== UI Callbacks ========== */
 static uint8_t max_tracks = 0;
@@ -152,6 +153,7 @@ static bool g_in_task = false;   /* True when Uno is executing a preset task */
 static void on_prev(void)
 {
     if (max_tracks == 0) return;
+    ensure_app_mode();
     current_track = (current_track <= 1) ? max_tracks : current_track - 1;
     ESP_LOGI(TAG, "Prev track %u", current_track);
     preload_images_for_track(current_track);
@@ -177,6 +179,7 @@ static void on_play(void)
         }
     } else {
         if (max_tracks == 0) return;
+        ensure_app_mode();
         preload_images_for_track(current_track);
         audio_player_play_track(current_track);
         is_playing = true;
@@ -193,6 +196,7 @@ static void on_play(void)
 static void on_next(void)
 {
     if (max_tracks == 0) return;
+    ensure_app_mode();
     current_track = (current_track >= max_tracks) ? 1 : current_track + 1;
     ESP_LOGI(TAG, "Next track %u", current_track);
     preload_images_for_track(current_track);
@@ -241,6 +245,22 @@ static void on_usb_mode(void)
     if (lvgl_port_lock(100)) {
         ui_show_menu();
         lvgl_port_unlock();
+    }
+}
+
+/* Ensure we are in APP mode (not USB/U-disk mode) before starting
+ * playback or a task. In USB mode the ESP32 cannot access its own
+ * flash storage, so we must switch back to APP mode first. */
+static void ensure_app_mode(void)
+{
+    if (!usb_msc_is_app_mode()) {
+        ESP_LOGI(TAG, "Exiting USB mode before playback/task");
+        if (usb_msc_switch_to_app()) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            max_tracks = scan_mp3_tracks();
+            current_track = 1;
+            preload_images_for_track(1);
+        }
     }
 }
 
@@ -293,6 +313,8 @@ static void i2c_cmd_task(void *param)
                 case 1: { // Play track
                     uint8_t track = cmd.value;
                     ESP_LOGI(TAG, "I2C CMD: Play track %d", track);
+                    /* Exit USB mode so ESP32 can access storage for playback */
+                    ensure_app_mode();
                     current_track = track;
                     preload_images_for_track(track);
                     audio_player_play_track(track);
@@ -453,10 +475,12 @@ static void load_startup_image(void)
 static void on_task1_btn(void)
 {
     ESP_LOGI(TAG, "Task 1 button pressed - sending command 0xA1");
+    /* Exit USB mode so ESP32 can access its storage for startup image */
+    ensure_app_mode();
     i2c_slave_set_command(CMD_TASK1);
     g_in_task = true;
     
-    // Load and display startup image (0.png)
+    // Load and display startup image (0.jpg)
     load_startup_image();
     if (g_startup_image_loaded && g_startup_image.pixels) {
         if (lvgl_port_lock(100)) {
@@ -465,14 +489,15 @@ static void on_task1_btn(void)
         }
     }
 }
-
 static void on_task2_btn(void)
 {
     ESP_LOGI(TAG, "Task 2 button pressed - sending command 0xA2");
+    /* Exit USB mode so ESP32 can access its storage for startup image */
+    ensure_app_mode();
     i2c_slave_set_command(CMD_TASK2);
     g_in_task = true;
     
-    // Load and display startup image (0.png)
+    // Load and display startup image (0.jpg)
     load_startup_image();
     if (g_startup_image_loaded && g_startup_image.pixels) {
         if (lvgl_port_lock(100)) {
@@ -481,7 +506,6 @@ static void on_task2_btn(void)
         }
     }
 }
-
 /* ========== Menu Action Wrappers (removed in new UI) ========== */
 
 /* ========== Button Task (GPIO control) ========== */
